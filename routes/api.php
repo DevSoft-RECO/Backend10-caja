@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\SSOController;
 use App\Http\Controllers\Cajas\DenominacionController;
 use App\Http\Controllers\Cajas\CajaController;
+use App\Http\Controllers\Cajas\MovimientoController;
 
 // Asegúrate de que el middleware 'sso' esté registrado en bootstrap/app.php
 Route::middleware('sso')->group(function () {
@@ -21,6 +22,9 @@ Route::middleware('sso')->group(function () {
     // Gestión de Cajas
     Route::apiResource('cajas', CajaController::class)->except(['destroy']); // Quitamos destroy para no romper transaccionalidad
     Route::post('cajas/{caja}/asignar-usuario', [CajaController::class, 'asignarUsuario']);
+
+    // Movimientos
+    Route::apiResource('movimientos', MovimientoController::class)->only(['index', 'store']);
 
     // Rutas Auxiliares para formularios
     Route::get('agencias', function () {
