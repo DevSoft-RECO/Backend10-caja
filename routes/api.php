@@ -7,6 +7,8 @@ use App\Http\Controllers\Auth\SSOController;
 use App\Http\Controllers\Cajas\DenominacionController;
 use App\Http\Controllers\Cajas\CajaController;
 use App\Http\Controllers\Cajas\MovimientoController;
+use App\Http\Controllers\Cajas\ConteoParcialController;
+use App\Http\Controllers\Cajas\CierreDiarioController;
 
 // Asegúrate de que el middleware 'sso' esté registrado en bootstrap/app.php
 Route::middleware('sso')->group(function () {
@@ -19,9 +21,14 @@ Route::middleware('sso')->group(function () {
         'denominaciones' => 'denominacion'
     ]);
     
+    // Auditoría y Cierres
+    Route::apiResource('cajas/conteos-parciales', ConteoParcialController::class)->only(['index', 'store', 'show']);
+    Route::apiResource('cajas/cierres-diarios', CierreDiarioController::class)->only(['index', 'store', 'show']);
+
     // Gestión de Cajas
     Route::apiResource('cajas', CajaController::class)->except(['destroy']); // Quitamos destroy para no romper transaccionalidad
     Route::post('cajas/{caja}/asignar-usuario', [CajaController::class, 'asignarUsuario']);
+    Route::get('cajas/{caja}/saldo-actual', [CierreDiarioController::class, 'getSaldoActual']);
 
     // Movimientos
     Route::apiResource('movimientos', MovimientoController::class)->only(['index', 'store']);
