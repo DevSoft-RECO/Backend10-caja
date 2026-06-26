@@ -13,15 +13,11 @@ return new class extends Migration
     {
         Schema::create('conteos_parciales', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('caja_id')->constrained('cajas')->onDelete('cascade');
+            $table->foreignId('caja_id')->unique()->constrained('cajas')->onDelete('cascade');
             $table->foreignId('usuario_id')->constrained('users');
             $table->timestamp('fecha_hora');
             $table->decimal('total_fisico_declarado', 15, 2);
-            $table->decimal('total_segun_sistema', 15, 2);
-            $table->decimal('diferencia', 15, 2);
             $table->timestamps();
-
-            $table->index(['caja_id', 'fecha_hora']);
         });
 
         Schema::create('conteo_parcial_detalles', function (Blueprint $table) {

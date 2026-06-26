@@ -15,15 +15,11 @@ class ConteoParcial extends Model
         'usuario_id',
         'fecha_hora',
         'total_fisico_declarado',
-        'total_segun_sistema',
-        'diferencia',
     ];
 
     protected $casts = [
         'fecha_hora' => 'datetime',
         'total_fisico_declarado' => 'decimal:2',
-        'total_segun_sistema' => 'decimal:2',
-        'diferencia' => 'decimal:2',
     ];
 
     public function caja(): BelongsTo

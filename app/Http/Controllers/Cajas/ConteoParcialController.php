@@ -21,8 +21,7 @@ class ConteoParcialController extends Controller
 
     public function index(Request $request)
     {
-        $query = ConteoParcial::with(['caja.agencia', 'usuario', 'detalles.denominacion'])
-            ->orderBy('fecha_hora', 'desc');
+        $query = ConteoParcial::with(['caja.agencia', 'usuario', 'detalles.denominacion']);
 
         if ($request->has('caja_id')) {
             $query->where('caja_id', $request->caja_id);
@@ -50,10 +49,7 @@ class ConteoParcialController extends Controller
         return DB::transaction(function () use ($request) {
             $cajaId = $request->caja_id;
             
-            // 1. Obtener saldo actual en el sistema
-            $totalSistema = $this->saldoService->obtenerSaldoActual($cajaId);
-
-            // 2. Calcular total físico declarado a partir de denominaciones
+            // 1. Calcular total físico declarado a partir de denominaciones
             $totalFisico = 0;
             $detallesParaCrear = [];
 
@@ -72,24 +68,48 @@ class ConteoParcialController extends Controller
                 ];
             }
 
-            $diferencia = $totalFisico - $totalSistema;
+            // 2. Buscar si ya existe un arqueo para esta caja
+            $conteo = ConteoParcial::where('caja_id', $cajaId)->first();
 
-            // 3. Crear cabecera
-            $conteo = ConteoParcial::create([
-                'caja_id' => $cajaId,
-                'usuario_id' => auth()->id() ?? 1,
-                'fecha_hora' => now(),
-                'total_fisico_declarado' => $totalFisico,
-                'total_segun_sistema' => $totalSistema,
-                'diferencia' => $diferencia,
-            ]);
+            if ($conteo) {
+                // Actualizar cabecera existente
+                $conteo->update([
+                    'usuario_id' => auth()->id() ?? 1,
+                    'fecha_hora' => now(),
+                    'total_fisico_declarado' => $totalFisico,
+                ]);
+                // Eliminar detalles previos
+                $conteo->detalles()->delete();
+            } else {
+                // Crear cabecera
+                $conteo = ConteoParcial::create([
+                    'caja_id' => $cajaId,
+                    'usuario_id' => auth()->id() ?? 1,
+                    'fecha_hora' => now(),
+                    'total_fisico_declarado' => $totalFisico,
+                ]);
+            }
 
-            // 4. Crear detalles
+            // 3. Crear detalles
             foreach ($detallesParaCrear as $detalle) {
                 $conteo->detalles()->create($detalle);
             }
 
-            return response()->json($conteo->load('detalles.denominacion'), 201);
+            return response()->json($conteo->load('detalles.denominacion'), 200);
         });
+    }
+
+    public function destroy($cajaId)
+    {
+        $conteo = ConteoParcial::where('caja_id', $cajaId)->first();
+        if ($conteo) {
+            $conteo->delete();
+            return response()->json([
+                'message' => 'El conteo parcial ha sido limpiado correctamente.'
+            ], 200);
+        }
+        return response()->json([
+            'message' => 'No se encontró ningún conteo para limpiar.'
+        ], 404);
     }
 }
