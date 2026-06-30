@@ -9,9 +9,13 @@ use App\Http\Controllers\Cajas\CajaController;
 use App\Http\Controllers\Cajas\MovimientoController;
 use App\Http\Controllers\Cajas\ConteoParcialController;
 use App\Http\Controllers\Cajas\CierreDiarioController;
+use App\Http\Controllers\Cajas\DashboardController;
 
 // Asegúrate de que el middleware 'sso' esté registrado en bootstrap/app.php
 Route::middleware('sso')->group(function () {
+    
+    // Dashboard General
+    Route::get('reportes/dashboard-general', [DashboardController::class, 'dashboardGeneral']);
     
     // 🧠 Sincronización JIT (Ecosistema Madre)
     Route::get('/me', [SSOController::class, 'me']);
@@ -22,13 +26,17 @@ Route::middleware('sso')->group(function () {
     ]);
     
     // Auditoría y Cierres
-    Route::apiResource('cajas/conteos-parciales', ConteoParcialController::class)->only(['index', 'store', 'show']);
+    Route::apiResource('cajas/conteos-parciales', ConteoParcialController::class)->only(['index', 'store', 'show', 'destroy']);
     Route::apiResource('cajas/cierres-diarios', CierreDiarioController::class)->only(['index', 'store', 'show']);
+
+    Route::get('cajas/{caja}/estado-apertura', [CajaController::class, 'estadoApertura']);
+    Route::post('cajas/{caja}/abrir', [CajaController::class, 'abrir']);
+    Route::post('cajas/{caja}/dia-cero', [CajaController::class, 'inicializarDiaCero']);
+    Route::get('cajas/{caja}/saldo-actual', [CierreDiarioController::class, 'getSaldoActual']);
 
     // Gestión de Cajas
     Route::apiResource('cajas', CajaController::class)->except(['destroy']); // Quitamos destroy para no romper transaccionalidad
     Route::post('cajas/{caja}/asignar-usuario', [CajaController::class, 'asignarUsuario']);
-    Route::get('cajas/{caja}/saldo-actual', [CierreDiarioController::class, 'getSaldoActual']);
 
     // Movimientos
     Route::apiResource('movimientos', MovimientoController::class)->only(['index', 'store']);

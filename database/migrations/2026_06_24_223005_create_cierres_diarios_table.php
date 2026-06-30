@@ -16,12 +16,16 @@ return new class extends Migration
             $table->foreignId('caja_id')->constrained('cajas')->onDelete('cascade');
             $table->foreignId('usuario_id')->constrained('users');
             $table->date('fecha_cierre');
-            $table->decimal('saldo_inicial_sistema', 15, 2);
-            $table->decimal('total_ingresos_sistema', 15, 2);
-            $table->decimal('total_egresos_sistema', 15, 2);
-            $table->decimal('saldo_final_sistema', 15, 2);
             $table->decimal('saldo_final_fisico_declarado', 15, 2);
-            $table->decimal('diferencia', 15, 2);
+            // Compartimento de Dinero Bueno
+            $table->decimal('saldo_inicial_bueno', 15, 2)->default(0.00);
+            $table->decimal('saldo_final_bueno', 15, 2)->default(0.00);
+            // Compartimento de Cajilla
+            $table->decimal('saldo_inicial_cajillas', 15, 2)->default(0.00);
+            $table->decimal('saldo_final_cajillas', 15, 2)->default(0.00);
+            // Compartimento de Deteriorado
+            $table->decimal('saldo_inicial_deteriorado', 15, 2)->default(0.00);
+            $table->decimal('saldo_final_deteriorado', 15, 2)->default(0.00);
             $table->timestamps();
 
             $table->unique(['caja_id', 'fecha_cierre']);

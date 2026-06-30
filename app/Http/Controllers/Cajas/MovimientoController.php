@@ -42,7 +42,7 @@ class MovimientoController extends Controller
             'origen_caja_id' => 'nullable|exists:cajas,id',
             'destino_caja_id' => 'nullable|exists:cajas,id|different:origen_caja_id',
             'tipo_operacion' => 'required|in:ingreso,egreso',
-            'categoria_movimiento' => 'required|in:billetes,monedas,cajilla,deteriorados',
+            'categoria_movimiento' => 'required|in:cajilla_apertura,cajilla_cierre,abastecimiento,devolucion,deteriorado',
             'descripcion' => 'nullable|string',
             'detalles' => 'required|array|min:1',
             'detalles.*.denominacion_id' => 'required|exists:denominaciones,id',

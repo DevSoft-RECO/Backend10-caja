@@ -14,25 +14,25 @@ class CierreDiario extends Model
         'caja_id',
         'usuario_id',
         'fecha_cierre',
-        'saldo_inicial_sistema',
-        'total_ingresos_sistema',
-        'total_egresos_sistema',
-        'saldo_final_sistema',
         'saldo_final_fisico_declarado',
-        'diferencia',
+        'saldo_inicial_bueno',
+        'saldo_final_bueno',
+        'saldo_inicial_cajillas',
+        'saldo_final_cajillas',
+        'saldo_inicial_deteriorado',
+        'saldo_final_deteriorado',
     ];
 
     protected $casts = [
         'fecha_cierre' => 'date',
-        'saldo_inicial_sistema' => 'decimal:2',
-        'total_ingresos_sistema' => 'decimal:2',
-        'total_egresos_sistema' => 'decimal:2',
-        'saldo_final_sistema' => 'decimal:2',
         'saldo_final_fisico_declarado' => 'decimal:2',
-        'diferencia' => 'decimal:2',
+        'saldo_inicial_bueno' => 'decimal:2',
+        'saldo_final_bueno' => 'decimal:2',
+        'saldo_inicial_cajillas' => 'decimal:2',
+        'saldo_final_cajillas' => 'decimal:2',
+        'saldo_inicial_deteriorado' => 'decimal:2',
+        'saldo_final_deteriorado' => 'decimal:2',
     ];
-
-    protected $appends = ['resultado_cuadre'];
 
     public function caja(): BelongsTo
     {
@@ -47,14 +47,5 @@ class CierreDiario extends Model
     public function detalles(): HasMany
     {
         return $this->hasMany(CierreDiarioDetalle::class, 'cierre_diario_id');
-    }
-
-    public function getResultadoCuadreAttribute(): string
-    {
-        $diff = (float) $this->diferencia;
-        if (abs($diff) < 0.01) {
-            return 'Cuadrado';
-        }
-        return $diff > 0 ? 'Sobrante' : 'Faltante';
     }
 }

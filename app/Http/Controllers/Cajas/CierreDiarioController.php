@@ -26,6 +26,9 @@ class CierreDiarioController extends Controller
     public function index(Request $request)
     {
         $query = CierreDiario::with(['caja.agencia', 'usuario', 'detalles.denominacion'])
+            ->whereHas('caja', function ($q) {
+                $q->where('tipo_caja', 'boveda');
+            })
             ->orderBy('fecha_cierre', 'desc');
 
         if ($request->has('caja_id')) {
@@ -38,6 +41,55 @@ class CierreDiarioController extends Controller
     public function show($id)
     {
         $cierre = CierreDiario::with(['caja.agencia', 'usuario', 'detalles.denominacion'])->findOrFail($id);
+
+        if ($cierre->caja->tipo_caja === 'boveda') {
+            // Calcular los flujos de movimientos reales para ese día específico de cierre
+            $start = Carbon::parse($cierre->fecha_cierre)->startOfDay();
+            $end = Carbon::parse($cierre->fecha_cierre)->endOfDay();
+
+            $cierre->total_ingresos_dia = (float) Movimiento::where('destino_caja_id', $cierre->caja_id)
+                ->where('categoria_movimiento', '!=', 'carga_inicial_dia_cero')
+                ->whereBetween('fecha_transaccion', [$start, $end])
+                ->sum('monto_total');
+
+            $cierre->total_egresos_dia = (float) Movimiento::where('origen_caja_id', $cierre->caja_id)
+                ->whereBetween('fecha_transaccion', [$start, $end])
+                ->sum('monto_total');
+
+            // Buscar el cierre anterior para determinar las cantidades iniciales de cada denominación
+            $cierreAnterior = CierreDiario::where('caja_id', $cierre->caja_id)
+                ->where('fecha_cierre', '<', $cierre->fecha_cierre)
+                ->orderBy('fecha_cierre', 'desc')
+                ->first();
+
+            $detallesAnteriores = collect();
+            if ($cierreAnterior) {
+                $detallesAnteriores = CierreDiarioDetalle::where('cierre_diario_id', $cierreAnterior->id)->get();
+            }
+
+            // Enriquecer cada detalle con su cantidad inicial del día
+            $cierre->detalles->each(function ($det) use ($detallesAnteriores) {
+                $prev = $detallesAnteriores->where('denominacion_id', $det->denominacion_id)
+                    ->where('estado_dinero', $det->estado_dinero)
+                    ->first();
+                $det->cantidad_inicial = $prev ? $prev->cantidad : 0;
+                $det->subtotal_inicial = $prev ? $prev->subtotal : 0.00;
+            });
+
+            // Buscar los cierres de ventanillas y cajas asociadas en la misma agencia y fecha de cierre
+            $cierre->cierres_asociados = CierreDiario::where('fecha_cierre', $cierre->fecha_cierre)
+                ->whereHas('caja', function ($query) use ($cierre) {
+                    $query->where('agencia_id', $cierre->caja->agencia_id)
+                          ->where('tipo_caja', '!=', 'boveda');
+                })
+                ->with(['caja', 'usuario', 'detalles.denominacion'])
+                ->get();
+        } else {
+            $cierre->total_ingresos_dia = 0.00;
+            $cierre->total_egresos_dia = 0.00;
+            $cierre->cierres_asociados = [];
+        }
+
         return response()->json($cierre);
     }
 
@@ -95,19 +147,72 @@ class CierreDiarioController extends Controller
                 ];
             }
 
-            $diferencia = $totalFisicoDeclarado - $saldoFinalSistema;
-
             // 4. Crear registro de Cierre Diario (Snapshot)
+            $saldoInicialBueno = 0.00;
+            $saldoFinalBueno = 0.00;
+            $saldoInicialCajillas = 0.00;
+            $saldoFinalCajillas = 0.00;
+            $saldoInicialDeteriorado = 0.00;
+            $saldoFinalDeteriorado = 0.00;
+
+            if ($caja->tipo_caja === 'boveda') {
+                // Obtener último cierre de Bóveda anterior para arrastrar saldos
+                $cierreAnterior = CierreDiario::where('caja_id', $caja->id)
+                    ->orderBy('fecha_cierre', 'desc')
+                    ->first();
+
+                if ($cierreAnterior) {
+                    $saldoInicialBueno = (float) $cierreAnterior->saldo_final_bueno;
+                    $saldoInicialCajillas = (float) $cierreAnterior->saldo_final_cajillas;
+                    $saldoInicialDeteriorado = (float) $cierreAnterior->saldo_final_deteriorado;
+                }
+
+                // Calcular efectivo bueno arqueado hoy
+                foreach ($request->detalles as $det) {
+                    if ($det['estado_dinero'] === 'bueno') {
+                        $denom = Denominacion::find($det['denominacion_id']);
+                        $saldoFinalBueno += $denom->valor * ($det['cantidad'] ?? 0);
+                    }
+                }
+
+                // Calcular total deteriorados de hoy (acumulativo)
+                $deterioradosArqueadosHoy = 0.00;
+                foreach ($request->detalles as $det) {
+                    if ($det['estado_dinero'] === 'deteriorado') {
+                        $denom = Denominacion::find($det['denominacion_id']);
+                        $deterioradosArqueadosHoy += $denom->valor * ($det['cantidad'] ?? 0);
+                    }
+                }
+                $saldoFinalDeteriorado = $saldoInicialDeteriorado + $deterioradosArqueadosHoy;
+
+                // Calcular flujos del compartimento de cajilla hoy (acumulativo)
+                $ingresosCajilla = (float) Movimiento::where('destino_caja_id', $caja->id)
+                    ->whereIn('categoria_movimiento', ['cajilla_cierre', 'devolucion'])
+                    ->whereBetween('fecha_transaccion', [Carbon::today()->startOfDay(), Carbon::today()->endOfDay()])
+                    ->sum('monto_total');
+
+                $egresosCajilla = (float) Movimiento::where('origen_caja_id', $caja->id)
+                    ->whereIn('categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                    ->whereBetween('fecha_transaccion', [Carbon::today()->startOfDay(), Carbon::today()->endOfDay()])
+                    ->sum('monto_total');
+
+                $saldoFinalCajillas = $saldoInicialCajillas + $ingresosCajilla - $egresosCajilla;
+            } else {
+                // Para ventanillas el comportamiento de dinero bueno es simple
+                $saldoFinalBueno = $totalFisicoDeclarado;
+            }
+
             $cierre = CierreDiario::create([
                 'caja_id' => $caja->id,
                 'usuario_id' => auth()->id() ?? 1,
                 'fecha_cierre' => $hoy,
-                'saldo_inicial_sistema' => $resumen['saldo_inicial'],
-                'total_ingresos_sistema' => $resumen['ingresos_dia'],
-                'total_egresos_sistema' => $resumen['egresos_dia'],
-                'saldo_final_sistema' => $saldoFinalSistema,
                 'saldo_final_fisico_declarado' => $totalFisicoDeclarado,
-                'diferencia' => $diferencia,
+                'saldo_inicial_bueno' => $saldoInicialBueno,
+                'saldo_final_bueno' => $saldoFinalBueno,
+                'saldo_inicial_cajillas' => $saldoInicialCajillas,
+                'saldo_final_cajillas' => $saldoFinalCajillas,
+                'saldo_inicial_deteriorado' => $saldoInicialDeteriorado,
+                'saldo_final_deteriorado' => $saldoFinalDeteriorado,
             ]);
 
             // Guardar detalles del desglose físico de gaveta
@@ -115,8 +220,8 @@ class CierreDiarioController extends Controller
                 $cierre->detalles()->create($detalle);
             }
 
-            // 5. El Barrido Virtual: Egresar el 100% del saldo final a la Bóveda de la misma agencia
-            if ($saldoFinalSistema > 0) {
+            // 5. El Barrido Virtual: Egresar el 100% del saldo físico real a la Bóveda de la misma agencia
+            if ($totalFisicoDeclarado > 0) {
                 $boveda = Caja::where('agencia_id', $caja->agencia_id)
                     ->where('tipo_caja', 'boveda')
                     ->where('estado', true)
@@ -125,23 +230,26 @@ class CierreDiarioController extends Controller
                 $movimientoBarrido = Movimiento::create([
                     'origen_caja_id' => $caja->id,
                     'destino_caja_id' => $boveda ? $boveda->id : null,
-                    'tipo_operacion' => 'egreso',
-                    'categoria_movimiento' => 'cierre_jornada_barrido',
+                    'tipo_operacion' => 'ingreso',
+                    'categoria_movimiento' => 'cajilla_cierre',
                     'descripcion' => 'Barrido automático de fin de jornada tras cierre diario.',
-                    'monto_total' => $saldoFinalSistema,
+                    'monto_total' => $totalFisicoDeclarado,
                     'usuario_id' => auth()->id() ?? 1,
                     'fecha_transaccion' => now(),
                 ]);
 
-                // Crear un detalle genérico o detallado para el movimiento de barrido
-                // Para mantener la consistencia, dividimos en un detalle representativo de lo enviado
-                MovimientoDetalle::create([
-                    'movimiento_id' => $movimientoBarrido->id,
-                    'denominacion_id' => $detallesParaCrear[0]['denominacion_id'] ?? 1,
-                    'cantidad' => 1,
-                    'subtotal' => $saldoFinalSistema,
-                    'estado_dinero' => 'bueno',
-                ]);
+                // Crear los detalles del movimiento de barrido basados en el arqueo físico real de la cajilla
+                foreach ($detallesParaCrear as $det) {
+                    if ($det['cantidad'] > 0) {
+                        MovimientoDetalle::create([
+                            'movimiento_id' => $movimientoBarrido->id,
+                            'denominacion_id' => $det['denominacion_id'],
+                            'cantidad' => $det['cantidad'],
+                            'subtotal' => $det['subtotal'],
+                            'estado_dinero' => $det['estado_dinero'],
+                        ]);
+                    }
+                }
             }
 
             // 6. Cierre del turno de la caja
