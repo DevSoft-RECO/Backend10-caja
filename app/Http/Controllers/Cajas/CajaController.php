@@ -202,12 +202,18 @@ class CajaController extends Controller
     public function inicializarDiaCero(Request $request, Caja $caja)
     {
         $request->validate([
-            'detalles' => 'required|array|min:1',
-            'detalles.*.denominacion_id' => 'required|exists:denominaciones,id',
-            'detalles.*.estado_dinero' => 'required|in:bueno,deteriorado',
-            'detalles.*.cantidad' => 'required|integer|min:0',
-            'saldo_cajillas' => 'nullable|numeric|min:0',
-            'saldo_deteriorado' => 'nullable|numeric|min:0',
+            'detalles_operaciones' => 'required|array',
+            'detalles_operaciones.*.denominacion_id' => 'required|exists:denominaciones,id',
+            'detalles_operaciones.*.cantidad' => 'required|integer|min:0',
+            
+            'detalles_cajillas' => 'required|array',
+            'detalles_cajillas.*.denominacion_id' => 'required|exists:denominaciones,id',
+            'detalles_cajillas.*.cantidad' => 'required|integer|min:0',
+            
+            'detalles_deteriorado' => 'required|array',
+            'detalles_deteriorado.*.denominacion_id' => 'required|exists:denominaciones,id',
+            'detalles_deteriorado.*.cantidad' => 'required|integer|min:0',
+            
             'observaciones' => 'nullable|string'
         ]);
 
@@ -222,35 +228,42 @@ class CajaController extends Controller
             ], 403);
         }
 
-        // 2. Calcular totales y preparar detalles
-        $totalCarga = 0;
-        $detallesProcesados = [];
+        // 2. Procesar compartimentos
         $ayer = now()->subDay()->toDateString();
-
-        foreach ($request->detalles as $det) {
-            $denom = Denominacion::find($det['denominacion_id']);
-            $cant = $det['cantidad'] ?? 0;
-            $subtotal = $denom->valor * $cant;
-
-            $totalCarga += $subtotal;
-
-            if ($cant > 0) {
-                $detallesProcesados[] = [
-                    'denominacion_id' => $denom->id,
-                    'cantidad' => $cant,
-                    'subtotal' => $subtotal,
-                    'estado_dinero' => $det['estado_dinero']
-                ];
+        
+        $procesarCompartimento = function ($detallesInput, $estado) {
+            $total = 0.00;
+            $detalles = [];
+            foreach ($detallesInput as $det) {
+                $denom = Denominacion::find($det['denominacion_id']);
+                $cant = (int) ($det['cantidad'] ?? 0);
+                if ($cant > 0) {
+                    $subtotal = $denom->valor * $cant;
+                    $total += $subtotal;
+                    $detalles[] = [
+                        'denominacion_id' => $denom->id,
+                        'cantidad' => $cant,
+                        'subtotal' => $subtotal,
+                        'estado_dinero' => $estado
+                    ];
+                }
             }
-        }
+            return ['total' => $total, 'detalles' => $detalles];
+        };
 
-        if ($totalCarga <= 0) {
+        $resBueno = $procesarCompartimento($request->detalles_operaciones, 'bueno');
+        $resCajillas = $procesarCompartimento($request->detalles_cajillas, 'bueno'); // Cajillas es dinero bueno físicamente
+        $resDeteriorado = $procesarCompartimento($request->detalles_deteriorado, 'deteriorado');
+
+        $totalConsolidado = $resBueno['total'] + $resCajillas['total'] + $resDeteriorado['total'];
+
+        if ($totalConsolidado <= 0) {
             return response()->json([
-                'message' => 'Debe declarar al menos una cantidad mayor a 0 para inicializar la caja.'
+                'message' => 'Debe declarar al menos una cantidad mayor a 0 en cualquier compartimento para inicializar la caja.'
             ], 422);
         }
 
-        return DB::transaction(function () use ($caja, $totalCarga, $detallesProcesados, $request, $ayer) {
+        return DB::transaction(function () use ($caja, $resBueno, $resCajillas, $resDeteriorado, $totalConsolidado, $request, $ayer) {
             
             // 3. Crear el Movimiento Histórico (Día Cero: Origen NULL -> Destino Caja)
             $movimiento = Movimiento::create([
@@ -259,13 +272,14 @@ class CajaController extends Controller
                 'tipo_operacion' => 'ingreso',
                 'categoria_movimiento' => 'carga_inicial_dia_cero',
                 'descripcion' => $request->observaciones ?? 'Carga de saldo inicial del Día Cero.',
-                'monto_total' => $totalCarga,
+                'monto_total' => $totalConsolidado,
                 'usuario_id' => auth()->id() ?? 1,
                 'fecha_transaccion' => now()->subDay() // Fecha de ayer
             ]);
 
-            // Guardar detalles del movimiento
-            foreach ($detallesProcesados as $det) {
+            // Guardar detalles del movimiento (Billetes buenos y deteriorados juntos)
+            $todosLosDetalles = array_merge($resBueno['detalles'], $resCajillas['detalles'], $resDeteriorado['detalles']);
+            foreach ($todosLosDetalles as $det) {
                 MovimientoDetalle::create([
                     'movimiento_id' => $movimiento->id,
                     'denominacion_id' => $det['denominacion_id'],
@@ -275,21 +289,22 @@ class CajaController extends Controller
                 ]);
             }
 
+            // 4. Crear registro de Cierre Diario para el Día Cero
             $cierre = CierreDiario::create([
                 'caja_id' => $caja->id,
                 'usuario_id' => auth()->id() ?? 1,
                 'fecha_cierre' => $ayer,
-                'saldo_final_fisico_declarado' => $totalCarga,
-                'saldo_inicial_bueno' => $totalCarga,
-                'saldo_final_bueno' => $totalCarga,
-                'saldo_inicial_cajillas' => $request->saldo_cajillas ?? 0.00,
-                'saldo_final_cajillas' => $request->saldo_cajillas ?? 0.00,
-                'saldo_inicial_deteriorado' => $request->saldo_deteriorado ?? 0.00,
-                'saldo_final_deteriorado' => $request->saldo_deteriorado ?? 0.00,
+                'saldo_final_fisico_declarado' => $totalConsolidado,
+                'saldo_inicial_bueno' => $resBueno['total'],
+                'saldo_final_bueno' => $resBueno['total'],
+                'saldo_inicial_cajillas' => $resCajillas['total'],
+                'saldo_final_cajillas' => $resCajillas['total'],
+                'saldo_inicial_deteriorado' => $resDeteriorado['total'],
+                'saldo_final_deteriorado' => $resDeteriorado['total'],
             ]);
 
             // Guardar detalles del cierre diario
-            foreach ($detallesProcesados as $det) {
+            foreach ($todosLosDetalles as $det) {
                 $cierre->detalles()->create([
                     'denominacion_id' => $det['denominacion_id'],
                     'estado_dinero' => $det['estado_dinero'],
@@ -299,10 +314,11 @@ class CajaController extends Controller
             }
 
             return response()->json([
-                'message' => 'Inicialización de Día Cero registrada exitosamente.',
+                'message' => 'Inicialización de Día Cero registrada exitosamente en sus tres compartimentos.',
                 'movimiento' => $movimiento->load('detalles.denominacion'),
                 'cierre' => $cierre->load('detalles.denominacion')
             ], 201);
         });
     }
+
 }
