@@ -17,9 +17,7 @@ return new class extends Migration
             $table->foreignId('denominacion_id')->constrained('denominaciones');
             $table->integer('cantidad');
             $table->decimal('subtotal', 15, 2);
-            
-            // ¡Clave para la lógica de la bóveda!
-            $table->enum('estado_dinero', ['bueno', 'deteriorado'])->default('bueno'); 
+            $table->enum('estado_dinero', ['bueno', 'deteriorado', 'cajillas'])->default('bueno');
             $table->timestamps();
 
             // Índice compuesto para buscar rápidamente dinero deteriorado

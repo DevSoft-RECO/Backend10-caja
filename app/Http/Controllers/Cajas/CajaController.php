@@ -252,7 +252,7 @@ class CajaController extends Controller
         };
 
         $resBueno = $procesarCompartimento($request->detalles_operaciones, 'bueno');
-        $resCajillas = $procesarCompartimento($request->detalles_cajillas, 'bueno'); // Cajillas es dinero bueno físicamente
+        $resCajillas = $procesarCompartimento($request->detalles_cajillas, 'cajillas'); 
         $resDeteriorado = $procesarCompartimento($request->detalles_deteriorado, 'deteriorado');
 
         $totalConsolidado = $resBueno['total'] + $resCajillas['total'] + $resDeteriorado['total'];
@@ -277,7 +277,7 @@ class CajaController extends Controller
                 'fecha_transaccion' => now()->subDay() // Fecha de ayer
             ]);
 
-            // Guardar detalles del movimiento (Billetes buenos y deteriorados juntos)
+            // Guardar detalles del movimiento
             $todosLosDetalles = array_merge($resBueno['detalles'], $resCajillas['detalles'], $resDeteriorado['detalles']);
             foreach ($todosLosDetalles as $det) {
                 MovimientoDetalle::create([

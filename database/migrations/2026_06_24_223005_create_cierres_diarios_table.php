@@ -35,7 +35,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('cierre_diario_id')->constrained('cierres_diarios')->onDelete('cascade');
             $table->foreignId('denominacion_id')->constrained('denominaciones');
-            $table->enum('estado_dinero', ['bueno', 'deteriorado']);
+            $table->enum('estado_dinero', ['bueno', 'deteriorado', 'cajillas']);
             $table->integer('cantidad');
             $table->decimal('subtotal', 15, 2);
             $table->timestamps();

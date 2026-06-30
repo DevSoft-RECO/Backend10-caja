@@ -240,13 +240,65 @@ class DashboardController extends Controller
             }
         }
 
+        $boveda = $cajas->firstWhere('tipo_caja', 'boveda');
+        $bovedaCerradaHoy = false;
+        if ($boveda) {
+            $bovedaCerradaHoy = DB::table('cierres_diarios')
+                ->where('caja_id', $boveda->id)
+                ->whereDate('fecha_cierre', Carbon::today())
+                ->exists();
+        }
+
         return response()->json([
             'fecha' => Carbon::today()->toDateString(),
             'cajas' => $cajas,
             'denominaciones' => $denominaciones,
             'matriz' => $matriz,
             'totales_cajillas' => $totalesCajillas,
-            'totales_deteriorados' => $totalesDeteriorados
+            'totales_deteriorados' => $totalesDeteriorados,
+            'boveda_cerrada_hoy' => $bovedaCerradaHoy
         ]);
+    }
+
+    public function obtenerInventarioDeteriorado(Request $request, $cajaId)
+    {
+        $denominaciones = \App\Models\Denominacion::where('activo', true)
+            ->orderBy('valor', 'desc')
+            ->get();
+
+        $inventario = [];
+
+        foreach ($denominaciones as $denom) {
+            // Ingresos (cuando destino_caja_id es la caja)
+            $ingresos = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.destino_caja_id', $cajaId)
+                ->where('movimiento_detalles.denominacion_id', $denom->id)
+                ->where('movimiento_detalles.estado_dinero', 'deteriorado')
+                ->sum('movimiento_detalles.cantidad');
+
+            // Egresos (cuando origen_caja_id es la caja)
+            $egresos = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.origen_caja_id', $cajaId)
+                ->where('movimiento_detalles.denominacion_id', $denom->id)
+                ->where('movimiento_detalles.estado_dinero', 'deteriorado')
+                ->sum('movimiento_detalles.cantidad');
+
+            $cantidadDisponible = (int) ($ingresos - $egresos);
+
+            if ($cantidadDisponible > 0) {
+                $inventario[] = [
+                    'id' => $denom->id,
+                    'nombre' => $denom->nombre,
+                    'valor' => (float) $denom->valor,
+                    'tipo' => $denom->tipo,
+                    'cantidad' => $cantidadDisponible,
+                    'subtotal' => $denom->valor * $cantidadDisponible
+                ];
+            }
+        }
+
+        return response()->json($inventario);
     }
 }
