@@ -187,7 +187,7 @@ class CajaController extends Controller
                     'denominacion_id' => $det['denominacion_id'],
                     'cantidad' => $det['cantidad'],
                     'subtotal' => $det['subtotal'],
-                    'estado_dinero' => $det['estado_dinero']
+                    'estado_dinero' => 'cajillas', // El dinero proviene de la reserva de cajillas
                 ]);
             }
 
