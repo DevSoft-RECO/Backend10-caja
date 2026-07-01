@@ -10,6 +10,7 @@ use App\Http\Controllers\Cajas\MovimientoController;
 use App\Http\Controllers\Cajas\ConteoParcialController;
 use App\Http\Controllers\Cajas\CierreDiarioController;
 use App\Http\Controllers\Cajas\DashboardController;
+use App\Http\Controllers\Cajas\TrasladoBovedaController;
 
 // Asegúrate de que el middleware 'sso' esté registrado en bootstrap/app.php
 Route::middleware('sso')->group(function () {
@@ -42,6 +43,7 @@ Route::middleware('sso')->group(function () {
 
     // Movimientos
     Route::apiResource('movimientos', MovimientoController::class)->only(['index', 'store']);
+    Route::post('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'store']);
 
     // Rutas Auxiliares para formularios
     Route::get('agencias', function () {

@@ -36,11 +36,12 @@ class DashboardController extends Controller
         $movimientosHoy = DB::table('movimiento_detalles')
             ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
             ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-            ->whereIn('movimientos.categoria_movimiento', ['abastecimiento', 'devolucion', 'cajilla_apertura', 'cajilla_cierre', 'cierre_jornada_barrido', 'deteriorado'])
+            ->whereIn('movimientos.categoria_movimiento', ['abastecimiento', 'devolucion', 'cajilla_apertura', 'cajilla_cierre', 'cierre_jornada_barrido', 'deteriorado', 'traslado_boveda'])
             ->select(
                 'movimientos.origen_caja_id',
                 'movimientos.destino_caja_id',
                 'movimientos.categoria_movimiento',
+                'movimientos.tipo_operacion',
                 'movimiento_detalles.denominacion_id',
                 'movimiento_detalles.estado_dinero',
                 DB::raw('SUM(movimiento_detalles.cantidad) as total_cantidad'),
@@ -50,6 +51,7 @@ class DashboardController extends Controller
                 'movimientos.origen_caja_id',
                 'movimientos.destino_caja_id',
                 'movimientos.categoria_movimiento',
+                'movimientos.tipo_operacion',
                 'movimiento_detalles.denominacion_id',
                 'movimiento_detalles.estado_dinero'
             )
@@ -153,27 +155,37 @@ class DashboardController extends Controller
 
             // C. Compartimento Operativo de Dinero Bueno (Excluye aperturas, cierres y deteriorados)
             if ($estado === 'bueno') {
-                // INGRESO UNIFICADO (Solo devolucion e ingreso ordinario)
-                if (in_array($categoria, ['devolucion', 'ingreso'])) {
+                if ($categoria === 'traslado_boveda') {
+                    $tipoMov = $item->tipo_operacion;
+                    if ($tipoMov === 'ingreso') {
+                        if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                            $matriz[$item->destino_caja_id][$denomId]['ingresos_cantidad'] += $cant;
+                            $matriz[$item->destino_caja_id][$denomId]['ingresos_monto'] += $monto;
+                        }
+                        if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                            $matriz[$item->origen_caja_id][$denomId]['ingresos_cantidad'] += $cant;
+                            $matriz[$item->origen_caja_id][$denomId]['ingresos_monto'] += $monto;
+                        }
+                    }
+                    if ($tipoMov === 'egreso') {
+                        if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                            $matriz[$item->origen_caja_id][$denomId]['egresos_cantidad'] += $cant;
+                            $matriz[$item->origen_caja_id][$denomId]['egresos_monto'] += $monto;
+                        }
+                        if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                            $matriz[$item->destino_caja_id][$denomId]['egresos_cantidad'] += $cant;
+                            $matriz[$item->destino_caja_id][$denomId]['egresos_monto'] += $monto;
+                        }
+                    }
+                } else {
+                    // Cruce físico regular para las demás categorías
                     if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
                         $matriz[$item->destino_caja_id][$denomId]['ingresos_cantidad'] += $cant;
                         $matriz[$item->destino_caja_id][$denomId]['ingresos_monto'] += $monto;
                     }
                     if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
-                        $matriz[$item->origen_caja_id][$denomId]['ingresos_cantidad'] += $cant;
-                        $matriz[$item->origen_caja_id][$denomId]['ingresos_monto'] += $monto;
-                    }
-                }
-                
-                // EGRESO UNIFICADO (Solo abastecimiento y egreso ordinario)
-                if (in_array($categoria, ['abastecimiento', 'egreso'])) {
-                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
                         $matriz[$item->origen_caja_id][$denomId]['egresos_cantidad'] += $cant;
                         $matriz[$item->origen_caja_id][$denomId]['egresos_monto'] += $monto;
-                    }
-                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
-                        $matriz[$item->destino_caja_id][$denomId]['egresos_cantidad'] += $cant;
-                        $matriz[$item->destino_caja_id][$denomId]['egresos_monto'] += $monto;
                     }
                 }
             }
