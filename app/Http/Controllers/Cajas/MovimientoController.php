@@ -109,12 +109,16 @@ class MovimientoController extends Controller
                 $cantBuena = $detalle['cantidad_buena'] ?? 0;
                 if ($cantBuena > 0) {
                     $subtotalBueno = $denominacion->valor * $cantBuena;
+                    
+                    // Si es apertura de cajilla, el estado contable del dinero es 'cajillas'
+                    $estadoDetalle = ($request->categoria_movimiento === 'cajilla_apertura') ? 'cajillas' : 'bueno';
+                    
                     MovimientoDetalle::create([
                         'movimiento_id' => $movimiento->id,
                         'denominacion_id' => $denominacion->id,
                         'cantidad' => $cantBuena,
                         'subtotal' => $subtotalBueno,
-                        'estado_dinero' => 'bueno',
+                        'estado_dinero' => $estadoDetalle,
                     ]);
                     $montoTotalCalculado += $subtotalBueno;
                 }

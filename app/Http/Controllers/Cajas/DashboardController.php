@@ -24,7 +24,7 @@ class DashboardController extends Controller
         $movimientosHoy = DB::table('movimiento_detalles')
             ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
             ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-            ->whereIn('movimientos.categoria_movimiento', ['abastecimiento', 'devolucion', 'cajilla_apertura', 'cajilla_cierre'])
+            ->whereIn('movimientos.categoria_movimiento', ['abastecimiento', 'devolucion', 'cajilla_apertura', 'cajilla_cierre', 'cierre_jornada_barrido', 'deteriorado'])
             ->select(
                 'movimientos.origen_caja_id',
                 'movimientos.destino_caja_id',
@@ -43,7 +43,7 @@ class DashboardController extends Controller
             )
             ->get();
 
-        // 3. Estructurar matriz: [caja_id][denominacion_id] = { saldo_inicial_cantidad, ingresos: 0, egresos: 0, deteriorados_recibidos: 0 }
+        // 3. Estructurar matriz consolidada
         $matriz = [];
         
         foreach ($cajas as $caja) {
@@ -52,27 +52,46 @@ class DashboardController extends Controller
             $ultimoCierre = null;
             if ($caja->tipo_caja === 'boveda') {
                 $ultimoCierre = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                    ->where('fecha_cierre', '<', Carbon::today())
                     ->with('detalles')
                     ->orderBy('id', 'desc')
                     ->first();
             }
 
             foreach ($denominaciones as $denom) {
-                $cantInicial = 0;
+                $cantInicialBueno = 0;
+                $cantInicialCajillas = 0;
+                $cantInicialDeteriorado = 0;
+                
                 if ($ultimoCierre) {
-                    $cantInicial = $ultimoCierre->detalles
+                    $cantInicialBueno = $ultimoCierre->detalles
                         ->where('denominacion_id', $denom->id)
                         ->where('estado_dinero', 'bueno')
+                        ->sum('cantidad');
+                    $cantInicialCajillas = $ultimoCierre->detalles
+                        ->where('denominacion_id', $denom->id)
+                        ->where('estado_dinero', 'cajillas')
+                        ->sum('cantidad');
+                    $cantInicialDeteriorado = $ultimoCierre->detalles
+                        ->where('denominacion_id', $denom->id)
+                        ->where('estado_dinero', 'deteriorado')
                         ->sum('cantidad');
                 }
 
                 $matriz[$caja->id][$denom->id] = [
-                    'saldo_inicial_cantidad' => (int)$cantInicial,
+                    // Operaciones (Bueno)
+                    'saldo_inicial_cantidad' => (int)$cantInicialBueno,
                     'ingresos_cantidad' => 0,
                     'ingresos_monto' => 0.00,
                     'egresos_cantidad' => 0,
                     'egresos_monto' => 0.00,
+
+                    // Cajillas
+                    'cajillas_inicial_cantidad' => (int)$cantInicialCajillas,
+                    'cajillas_ingresos_cantidad' => 0,
+                    'cajillas_egresos_cantidad' => 0,
+
+                    // Deteriorado
+                    'deteriorado_inicial_cantidad' => (int)$cantInicialDeteriorado,
                     'deteriorado_ingreso_cantidad' => 0,
                     'deteriorado_egreso_cantidad' => 0,
                 ];
@@ -87,27 +106,55 @@ class DashboardController extends Controller
             $estado = $item->estado_dinero;
             $categoria = $item->categoria_movimiento;
 
-            // Para la Bóveda, se mantiene la lógica contable real del Libro Mayor:
-            // - Bóveda como origen: egreso (enviado).
-            // - Bóveda como destino: ingreso (recibido).
-
-            // Para las Ventanillas de Atención (Cajillas):
-            // - Apertura ('cajilla_apertura') y Abastecimiento ('abastecimiento'): Representan egresos (efectivo enviado a gaveta que saldrá hacia los asociados).
-            // - Cierre ('cajilla_cierre') y Devolución ('devolucion'): Representan ingresos (recibido de vuelta a boveda o devuelto).
-
-            if ($estado === 'bueno') {
-                if ($categoria === 'devolucion') {
+            // A. Compartimento de Cajillas (En Tránsito)
+            if (in_array($categoria, ['cajilla_apertura', 'cajilla_cierre'])) {
+                // Apertura: Egreso para Bóveda y Egreso para Ventanilla
+                if ($categoria === 'cajilla_apertura') {
                     if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
-                        $matriz[$item->origen_caja_id][$denomId]['ingresos_cantidad'] += $cant;
-                        $matriz[$item->origen_caja_id][$denomId]['ingresos_monto'] += $monto;
+                        $matriz[$item->origen_caja_id][$denomId]['cajillas_egresos_cantidad'] += $cant;
                     }
+                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                        $matriz[$item->destino_caja_id][$denomId]['cajillas_egresos_cantidad'] += $cant;
+                    }
+                }
+                // Cierre: Ingreso para Bóveda e Ingreso para Ventanilla
+                if ($categoria === 'cajilla_cierre') {
+                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                        $matriz[$item->destino_caja_id][$denomId]['cajillas_ingresos_cantidad'] += $cant;
+                    }
+                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                        $matriz[$item->origen_caja_id][$denomId]['cajillas_ingresos_cantidad'] += $cant;
+                    }
+                }
+            }
+
+            // B. Compartimento de Deteriorado
+            if ($estado === 'deteriorado' || $categoria === 'deteriorado') {
+                // El traspaso de deteriorado a Bóveda se registra como INGRESO para ambas cajas
+                if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                    $matriz[$item->destino_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
+                }
+                if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                    $matriz[$item->origen_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
+                }
+            }
+
+            // C. Compartimento Operativo de Dinero Bueno (Excluye aperturas, cierres y deteriorados)
+            if ($estado === 'bueno') {
+                // INGRESO UNIFICADO (Solo devolucion e ingreso ordinario)
+                if (in_array($categoria, ['devolucion', 'ingreso'])) {
                     if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
                         $matriz[$item->destino_caja_id][$denomId]['ingresos_cantidad'] += $cant;
                         $matriz[$item->destino_caja_id][$denomId]['ingresos_monto'] += $monto;
                     }
+                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                        $matriz[$item->origen_caja_id][$denomId]['ingresos_cantidad'] += $cant;
+                        $matriz[$item->origen_caja_id][$denomId]['ingresos_monto'] += $monto;
+                    }
                 }
-
-                if ($categoria === 'abastecimiento') {
+                
+                // EGRESO UNIFICADO (Solo abastecimiento y egreso ordinario)
+                if (in_array($categoria, ['abastecimiento', 'egreso'])) {
                     if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
                         $matriz[$item->origen_caja_id][$denomId]['egresos_cantidad'] += $cant;
                         $matriz[$item->origen_caja_id][$denomId]['egresos_monto'] += $monto;
@@ -118,21 +165,12 @@ class DashboardController extends Controller
                     }
                 }
             }
-
-            if ($estado === 'deteriorado') {
-                if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
-                    $matriz[$item->origen_caja_id][$denomId]['deteriorado_egreso_cantidad'] += $cant;
-                }
-                if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
-                    $matriz[$item->destino_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
-                }
-            }
         }
 
-        // 4. Calcular el flujo de Cajillas (Aperturas, Cierres y Barridos)
+        // 4. Calcular el flujo de Cajillas (Aperturas y Cierres únicamente)
         $movimientosCajillas = DB::table('movimientos')
             ->whereBetween('fecha_transaccion', [$start, $end])
-            ->whereIn('categoria_movimiento', ['cajilla_apertura', 'cajilla_cierre', 'cierre_jornada_barrido', 'abastecimiento', 'devolucion'])
+            ->whereIn('categoria_movimiento', ['cajilla_apertura', 'cajilla_cierre'])
             ->select('origen_caja_id', 'destino_caja_id', 'categoria_movimiento', DB::raw('SUM(monto_total) as total'))
             ->groupBy('origen_caja_id', 'destino_caja_id', 'categoria_movimiento')
             ->get();
@@ -142,7 +180,6 @@ class DashboardController extends Controller
             $saldoInicialCajillas = 0.00;
             if ($caja->tipo_caja === 'boveda') {
                 $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                    ->where('fecha_cierre', '<', Carbon::today())
                     ->orderBy('id', 'desc')
                     ->first();
                 if ($ultimoCierreBoveda) {
@@ -162,31 +199,21 @@ class DashboardController extends Controller
 
             // Procesar origen
             if ($item->origen_caja_id && isset($totalesCajillas[$item->origen_caja_id])) {
-                $caja = $cajas->firstWhere('id', $item->origen_caja_id);
-                if ($caja && $caja->tipo_caja === 'ventanilla') {
-                    if ($categoria === 'cajilla_cierre') {
-                        $totalesCajillas[$item->origen_caja_id]['ingresos'] += $total;
-                    }
-                } else {
-                    // Para Bóveda u otros
-                    if ($categoria === 'cajilla_apertura') {
-                        $totalesCajillas[$item->origen_caja_id]['egresos'] += $total;
-                    }
+                if ($categoria === 'cajilla_apertura') {
+                    $totalesCajillas[$item->origen_caja_id]['egresos'] += $total;
+                }
+                if ($categoria === 'cajilla_cierre') {
+                    $totalesCajillas[$item->origen_caja_id]['ingresos'] += $total;
                 }
             }
 
             // Procesar destino
             if ($item->destino_caja_id && isset($totalesCajillas[$item->destino_caja_id])) {
-                $caja = $cajas->firstWhere('id', $item->destino_caja_id);
-                if ($caja && $caja->tipo_caja === 'ventanilla') {
-                    if ($categoria === 'cajilla_apertura') {
-                        $totalesCajillas[$item->destino_caja_id]['egresos'] += $total;
-                    }
-                } else {
-                    // Para Bóveda u otros
-                    if ($categoria === 'cajilla_cierre') {
-                        $totalesCajillas[$item->destino_caja_id]['ingresos'] += $total;
-                    }
+                if ($categoria === 'cajilla_apertura') {
+                    $totalesCajillas[$item->destino_caja_id]['egresos'] += $total;
+                }
+                if ($categoria === 'cajilla_cierre') {
+                    $totalesCajillas[$item->destino_caja_id]['ingresos'] += $total;
                 }
             }
         }
@@ -206,7 +233,6 @@ class DashboardController extends Controller
             $saldoInicialDeteriorados = 0.00;
             if ($caja->tipo_caja === 'boveda') {
                 $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                    ->where('fecha_cierre', '<', Carbon::today())
                     ->orderBy('id', 'desc')
                     ->first();
                 if ($ultimoCierreBoveda) {
@@ -268,24 +294,102 @@ class DashboardController extends Controller
 
         $inventario = [];
 
+        // Obtener último cierre de Bóveda para tomar las cantidades iniciales de deteriorados
+        $ultimoCierre = DB::table('cierres_diarios')
+            ->where('caja_id', $cajaId)
+            ->orderBy('id', 'desc')
+            ->first();
+
         foreach ($denominaciones as $denom) {
-            // Ingresos (cuando destino_caja_id es la caja)
+            $cantidadInicial = 0;
+            if ($ultimoCierre) {
+                $cantidadInicial = DB::table('cierre_diario_detalles')
+                    ->where('cierre_diario_id', $ultimoCierre->id)
+                    ->where('denominacion_id', $denom->id)
+                    ->where('estado_dinero', 'deteriorado')
+                    ->value('cantidad') ?? 0;
+            }
+
+            // Ingresos (cuando destino_caja_id es la caja y no es carga inicial)
             $ingresos = DB::table('movimiento_detalles')
                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                 ->where('movimientos.destino_caja_id', $cajaId)
                 ->where('movimiento_detalles.denominacion_id', $denom->id)
                 ->where('movimiento_detalles.estado_dinero', 'deteriorado')
+                ->where('movimientos.categoria_movimiento', '!=', 'carga_inicial_dia_cero')
                 ->sum('movimiento_detalles.cantidad');
 
-            // Egresos (cuando origen_caja_id es la caja)
+            // Egresos (cuando origen_caja_id es la caja y no es carga inicial)
             $egresos = DB::table('movimiento_detalles')
                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                 ->where('movimientos.origen_caja_id', $cajaId)
                 ->where('movimiento_detalles.denominacion_id', $denom->id)
                 ->where('movimiento_detalles.estado_dinero', 'deteriorado')
+                ->where('movimientos.categoria_movimiento', '!=', 'carga_inicial_dia_cero')
                 ->sum('movimiento_detalles.cantidad');
 
-            $cantidadDisponible = (int) ($ingresos - $egresos);
+            $cantidadDisponible = (int) ($cantidadInicial + $ingresos - $egresos);
+
+            if ($cantidadDisponible > 0) {
+                $inventario[] = [
+                    'id' => $denom->id,
+                    'nombre' => $denom->nombre,
+                    'valor' => (float) $denom->valor,
+                    'tipo' => $denom->tipo,
+                    'cantidad' => $cantidadDisponible,
+                    'subtotal' => $denom->valor * $cantidadDisponible
+                ];
+            }
+        }
+
+        return response()->json($inventario);
+    }
+
+    public function obtenerInventarioCajillas(Request $request, $cajaId)
+    {
+        $denominaciones = \App\Models\Denominacion::where('activo', true)
+            ->orderBy('valor', 'desc')
+            ->get();
+
+        $inventario = [];
+        $start = Carbon::today()->startOfDay();
+        $end = Carbon::today()->endOfDay();
+
+        // Obtener último cierre de Bóveda para tomar las cantidades iniciales de cajillas
+        $ultimoCierre = DB::table('cierres_diarios')
+            ->where('caja_id', $cajaId)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        foreach ($denominaciones as $denom) {
+            $cantidadInicial = 0;
+            if ($ultimoCierre) {
+                $cantidadInicial = DB::table('cierre_diario_detalles')
+                    ->where('cierre_diario_id', $ultimoCierre->id)
+                    ->where('denominacion_id', $denom->id)
+                    ->where('estado_dinero', 'cajillas')
+                    ->value('cantidad') ?? 0;
+            }
+
+            // Ingresos (cuando destino_caja_id es la Bóveda y es flujo de cajillas)
+            $ingresos = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.destino_caja_id', $cajaId)
+                ->where('movimiento_detalles.denominacion_id', $denom->id)
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'devolucion', 'cierre_jornada_barrido'])
+                ->sum('movimiento_detalles.cantidad');
+
+            // Egresos (cuando origen_caja_id es la Bóveda y es flujo de cajillas)
+            $egresos = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.origen_caja_id', $cajaId)
+                ->where('movimiento_detalles.denominacion_id', $denom->id)
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                ->sum('movimiento_detalles.cantidad');
+
+            $cantidadDisponible = (int) ($cantidadInicial + $ingresos - $egresos);
 
             if ($cantidadDisponible > 0) {
                 $inventario[] = [

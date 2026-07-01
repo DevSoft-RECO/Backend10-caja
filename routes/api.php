@@ -17,6 +17,7 @@ Route::middleware('sso')->group(function () {
     // Dashboard General
     Route::get('reportes/dashboard-general', [DashboardController::class, 'dashboardGeneral']);
     Route::get('cajas/{caja}/inventario-deteriorado', [DashboardController::class, 'obtenerInventarioDeteriorado']);
+    Route::get('cajas/{caja}/inventario-cajillas', [DashboardController::class, 'obtenerInventarioCajillas']);
     
     // 🧠 Sincronización JIT (Ecosistema Madre)
     Route::get('/me', [SSOController::class, 'me']);

@@ -105,7 +105,7 @@ class CierreDiarioController extends Controller
             'caja_id' => 'required|exists:cajas,id',
             'detalles' => 'required|array|min:1',
             'detalles.*.denominacion_id' => 'required|exists:denominaciones,id',
-            'detalles.*.estado_dinero' => 'required|in:bueno,deteriorado',
+            'detalles.*.estado_dinero' => 'required|in:bueno,deteriorado,cajillas',
             'detalles.*.cantidad' => 'required|integer|min:0',
         ]);
 
@@ -175,28 +175,21 @@ class CierreDiarioController extends Controller
                     }
                 }
 
-                // Calcular total deteriorados de hoy (acumulativo)
-                $deterioradosArqueadosHoy = 0.00;
+                // Calcular total deteriorados de hoy en base al arqueo físico enviado
                 foreach ($request->detalles as $det) {
                     if ($det['estado_dinero'] === 'deteriorado') {
                         $denom = Denominacion::find($det['denominacion_id']);
-                        $deterioradosArqueadosHoy += $denom->valor * ($det['cantidad'] ?? 0);
+                        $saldoFinalDeteriorado += $denom->valor * ($det['cantidad'] ?? 0);
                     }
                 }
-                $saldoFinalDeteriorado = $saldoInicialDeteriorado + $deterioradosArqueadosHoy;
 
-                // Calcular flujos del compartimento de cajilla hoy (acumulativo)
-                $ingresosCajilla = (float) Movimiento::where('destino_caja_id', $caja->id)
-                    ->whereIn('categoria_movimiento', ['cajilla_cierre', 'devolucion'])
-                    ->whereBetween('fecha_transaccion', [Carbon::today()->startOfDay(), Carbon::today()->endOfDay()])
-                    ->sum('monto_total');
-
-                $egresosCajilla = (float) Movimiento::where('origen_caja_id', $caja->id)
-                    ->whereIn('categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
-                    ->whereBetween('fecha_transaccion', [Carbon::today()->startOfDay(), Carbon::today()->endOfDay()])
-                    ->sum('monto_total');
-
-                $saldoFinalCajillas = $saldoInicialCajillas + $ingresosCajilla - $egresosCajilla;
+                // Calcular total cajillas de hoy en base al arqueo físico enviado
+                foreach ($request->detalles as $det) {
+                    if ($det['estado_dinero'] === 'cajillas') {
+                        $denom = Denominacion::find($det['denominacion_id']);
+                        $saldoFinalCajillas += $denom->valor * ($det['cantidad'] ?? 0);
+                    }
+                }
             } else {
                 // Para ventanillas el comportamiento de dinero bueno es simple
                 $saldoFinalBueno = $totalFisicoDeclarado;
@@ -246,7 +239,7 @@ class CierreDiarioController extends Controller
                             'denominacion_id' => $det['denominacion_id'],
                             'cantidad' => $det['cantidad'],
                             'subtotal' => $det['subtotal'],
-                            'estado_dinero' => $det['estado_dinero'],
+                            'estado_dinero' => 'cajillas', // Retorna a la reserva de cajillas
                         ]);
                     }
                 }
