@@ -36,7 +36,7 @@ class DashboardController extends Controller
         $movimientosHoy = DB::table('movimiento_detalles')
             ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
             ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-            ->whereIn('movimientos.categoria_movimiento', ['abastecimiento', 'devolucion', 'cajilla_apertura', 'cajilla_cierre', 'cierre_jornada_barrido', 'deteriorado', 'traslado_boveda'])
+            ->whereIn('movimientos.categoria_movimiento', ['abastecimiento', 'devolucion', 'cajilla_apertura', 'cajilla_cierre', 'cierre_jornada_barrido', 'deteriorado', 'traslado_boveda', 'bancos_extraccion', 'bancos_inyeccion'])
             ->select(
                 'movimientos.origen_caja_id',
                 'movimientos.destino_caja_id',
@@ -144,18 +144,28 @@ class DashboardController extends Controller
 
             // B. Compartimento de Deteriorado
             if ($estado === 'deteriorado' || $categoria === 'deteriorado') {
-                // El traspaso de deteriorado a Bóveda se registra como INGRESO para ambas cajas
-                if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
-                    $matriz[$item->destino_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
-                }
-                if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
-                    $matriz[$item->origen_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
+                if ($categoria === 'bancos_extraccion') {
+                    // Egreso de deteriorado por remesa a bancos
+                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                        $matriz[$item->origen_caja_id][$denomId]['deteriorado_egreso_cantidad'] += $cant;
+                    }
+                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                        $matriz[$item->destino_caja_id][$denomId]['deteriorado_egreso_cantidad'] += $cant;
+                    }
+                } else {
+                    // El traspaso de deteriorado a Bóveda se registra como INGRESO para ambas cajas
+                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                        $matriz[$item->destino_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
+                    }
+                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                        $matriz[$item->origen_caja_id][$denomId]['deteriorado_ingreso_cantidad'] += $cant;
+                    }
                 }
             }
 
             // C. Compartimento Operativo de Dinero Bueno (Excluye aperturas, cierres y deteriorados)
             if ($estado === 'bueno') {
-                if ($categoria === 'traslado_boveda') {
+                if (in_array($categoria, ['traslado_boveda', 'bancos_extraccion', 'bancos_inyeccion'])) {
                     $tipoMov = $item->tipo_operacion;
                     if ($tipoMov === 'ingreso') {
                         if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
@@ -242,14 +252,14 @@ class DashboardController extends Controller
             }
         }
 
-        // 5. Calcular el flujo de Deteriorados (Movimientos con piezas marcadas como deterioradas de la categoría deteriorado)
+        // 5. Calcular el flujo de Deteriorados (Movimientos con piezas marcadas como deterioradas)
         $movimientosDeteriorados = DB::table('movimiento_detalles')
             ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
             ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
             ->where('movimiento_detalles.estado_dinero', 'deteriorado')
-            ->where('movimientos.categoria_movimiento', 'deteriorado')
-            ->select('movimientos.origen_caja_id', 'movimientos.destino_caja_id', DB::raw('SUM(movimiento_detalles.subtotal) as total'))
-            ->groupBy('movimientos.origen_caja_id', 'movimientos.destino_caja_id')
+            ->whereIn('movimientos.categoria_movimiento', ['deteriorado', 'bancos_extraccion'])
+            ->select('movimientos.origen_caja_id', 'movimientos.destino_caja_id', 'movimientos.categoria_movimiento', DB::raw('SUM(movimiento_detalles.subtotal) as total'))
+            ->groupBy('movimientos.origen_caja_id', 'movimientos.destino_caja_id', 'movimientos.categoria_movimiento')
             ->get();
 
         $totalesDeteriorados = [];
@@ -272,20 +282,33 @@ class DashboardController extends Controller
         }
         foreach ($movimientosDeteriorados as $item) {
             $total = (float) $item->total;
-            if ($item->origen_caja_id && isset($totalesDeteriorados[$item->origen_caja_id])) {
-                $caja = $cajas->firstWhere('id', $item->origen_caja_id);
-                if ($caja && $caja->tipo_caja === 'ventanilla') {
-                    $totalesDeteriorados[$item->origen_caja_id]['ingresos'] += $total;
-                } else {
+            $cat = $item->categoria_movimiento;
+
+            if ($cat === 'bancos_extraccion') {
+                // Extracción a bancos: Egreso para ambas cajas involucradas
+                if ($item->origen_caja_id && isset($totalesDeteriorados[$item->origen_caja_id])) {
                     $totalesDeteriorados[$item->origen_caja_id]['egresos'] += $total;
                 }
-            }
-            if ($item->destino_caja_id && isset($totalesDeteriorados[$item->destino_caja_id])) {
-                $caja = $cajas->firstWhere('id', $item->destino_caja_id);
-                if ($caja && $caja->tipo_caja === 'boveda') {
-                    $totalesDeteriorados[$item->destino_caja_id]['ingresos'] += $total;
-                } else {
+                if ($item->destino_caja_id && isset($totalesDeteriorados[$item->destino_caja_id])) {
                     $totalesDeteriorados[$item->destino_caja_id]['egresos'] += $total;
+                }
+            } else {
+                // Traspaso ordinario de deteriorado
+                if ($item->origen_caja_id && isset($totalesDeteriorados[$item->origen_caja_id])) {
+                    $caja = $cajas->firstWhere('id', $item->origen_caja_id);
+                    if ($caja && $caja->tipo_caja === 'ventanilla') {
+                        $totalesDeteriorados[$item->origen_caja_id]['ingresos'] += $total;
+                    } else {
+                        $totalesDeteriorados[$item->origen_caja_id]['egresos'] += $total;
+                    }
+                }
+                if ($item->destino_caja_id && isset($totalesDeteriorados[$item->destino_caja_id])) {
+                    $caja = $cajas->firstWhere('id', $item->destino_caja_id);
+                    if ($caja && $caja->tipo_caja === 'boveda') {
+                        $totalesDeteriorados[$item->destino_caja_id]['ingresos'] += $total;
+                    } else {
+                        $totalesDeteriorados[$item->destino_caja_id]['egresos'] += $total;
+                    }
                 }
             }
         }
