@@ -16,8 +16,20 @@ class DashboardController extends Controller
         $start = Carbon::today()->startOfDay();
         $end = Carbon::today()->endOfDay();
 
-        // 1. Obtener todas las cajas y denominaciones activas
-        $cajas = Caja::with('agencia')->where('estado', true)->get();
+        // 1. Obtener la agencia seleccionada (o tomar la primera por defecto)
+        $agenciaId = $request->query('agencia_id');
+        if (!$agenciaId) {
+            $primeraCaja = Caja::where('estado', true)->first();
+            $agenciaId = $primeraCaja ? $primeraCaja->agencia_id : null;
+        }
+
+        // Obtener cajas de la agencia seleccionada y denominaciones activas
+        $cajas = Caja::with('agencia')
+            ->where('estado', true)
+            ->when($agenciaId, function($q) use ($agenciaId) {
+                return $q->where('agencia_id', $agenciaId);
+            })
+            ->get();
         $denominaciones = Denominacion::where('activo', true)->orderBy('valor', 'desc')->get();
 
         // 2. Query de agregación agrupada para movimientos de hoy (Flujo regular)
@@ -275,6 +287,8 @@ class DashboardController extends Controller
                 ->exists();
         }
 
+        $agencias = \App\Models\Agencia::orderBy('nombre')->get();
+
         return response()->json([
             'fecha' => Carbon::today()->toDateString(),
             'cajas' => $cajas,
@@ -282,7 +296,9 @@ class DashboardController extends Controller
             'matriz' => $matriz,
             'totales_cajillas' => $totalesCajillas,
             'totales_deteriorados' => $totalesDeteriorados,
-            'boveda_cerrada_hoy' => $bovedaCerradaHoy
+            'boveda_cerrada_hoy' => $bovedaCerradaHoy,
+            'agencias' => $agencias,
+            'agencia_seleccionada_id' => (int) $agenciaId
         ]);
     }
 
