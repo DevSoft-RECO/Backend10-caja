@@ -187,6 +187,26 @@ class DashboardController extends Controller
                             $matriz[$item->destino_caja_id][$denomId]['egresos_monto'] += $monto;
                         }
                     }
+                } elseif ($categoria === 'abastecimiento') {
+                    // Abastecimiento: Egreso para ambas cajas (Bóveda Origen y Ventanilla Destino)
+                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                        $matriz[$item->origen_caja_id][$denomId]['egresos_cantidad'] += $cant;
+                        $matriz[$item->origen_caja_id][$denomId]['egresos_monto'] += $monto;
+                    }
+                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                        $matriz[$item->destino_caja_id][$denomId]['egresos_cantidad'] += $cant;
+                        $matriz[$item->destino_caja_id][$denomId]['egresos_monto'] += $monto;
+                    }
+                } elseif ($categoria === 'devolucion') {
+                    // Devolución: Ingreso para ambas cajas (Ventanilla Origen y Bóveda Destino)
+                    if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
+                        $matriz[$item->destino_caja_id][$denomId]['ingresos_cantidad'] += $cant;
+                        $matriz[$item->destino_caja_id][$denomId]['ingresos_monto'] += $monto;
+                    }
+                    if ($item->origen_caja_id && isset($matriz[$item->origen_caja_id][$denomId])) {
+                        $matriz[$item->origen_caja_id][$denomId]['ingresos_cantidad'] += $cant;
+                        $matriz[$item->origen_caja_id][$denomId]['ingresos_monto'] += $monto;
+                    }
                 } else {
                     // Cruce físico regular para las demás categorías
                     if ($item->destino_caja_id && isset($matriz[$item->destino_caja_id][$denomId])) {
