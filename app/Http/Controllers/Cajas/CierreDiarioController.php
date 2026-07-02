@@ -213,8 +213,8 @@ class CierreDiarioController extends Controller
                 $cierre->detalles()->create($detalle);
             }
 
-            // 5. El Barrido Virtual: Egresar el 100% del saldo físico real a la Bóveda de la misma agencia
-            if ($totalFisicoDeclarado > 0) {
+            // 5. El Barrido Virtual: Egresar el 100% del saldo físico real a la Bóveda de la misma agencia (Solo para Ventanillas)
+            if ($caja->tipo_caja === 'ventanilla' && $totalFisicoDeclarado > 0) {
                 $boveda = Caja::where('agencia_id', $caja->agencia_id)
                     ->where('tipo_caja', 'boveda')
                     ->where('estado', true)

@@ -59,13 +59,39 @@ class DashboardController extends Controller
 
         // 3. Estructurar matriz consolidada
         $matriz = [];
+        $cajasCerradasHoy = [];
+
+        // Validar primero si la Bóveda de la sucursal ya cerró hoy para arrastrar el cierre general de toda la agencia
+        $bovedaAgencia = $cajas->firstWhere('tipo_caja', 'boveda');
+        $bovedaCerradaHoy = false;
+        if ($bovedaAgencia) {
+            $bovedaCerradaHoy = \App\Models\CierreDiario::where('caja_id', $bovedaAgencia->id)
+                ->where('fecha_cierre', $start->toDateString())
+                ->exists();
+        }
         
         foreach ($cajas as $caja) {
             $matriz[$caja->id] = [];
             
+            // Si la Bóveda de la sucursal ya cerró hoy, marcamos tanto la Bóveda como la Caja General como cerradas
+            if ($bovedaCerradaHoy && in_array($caja->tipo_caja, ['boveda', 'general'])) {
+                $cajasCerradasHoy[$caja->id] = true;
+            }
+
+            // Validar si ya existe un cierre consolidado hoy para esta caja específica
+            $cierreHoy = \App\Models\CierreDiario::where('caja_id', $caja->id)
+                ->where('fecha_cierre', $start->toDateString())
+                ->with('detalles')
+                ->first();
+
             $ultimoCierre = null;
-            if ($caja->tipo_caja === 'boveda') {
+            if ($cierreHoy) {
+                $ultimoCierre = $cierreHoy;
+                $cajasCerradasHoy[$caja->id] = true; // Por seguridad
+            } elseif ($caja->tipo_caja === 'boveda') {
+                // Si no hay cierre hoy, buscamos el cierre de la jornada anterior
                 $ultimoCierre = \App\Models\CierreDiario::where('caja_id', $caja->id)
+                    ->where('created_at', '<', $start)
                     ->with('detalles')
                     ->orderBy('id', 'desc')
                     ->first();
@@ -114,6 +140,13 @@ class DashboardController extends Controller
 
         // Procesar los agregados
         foreach ($movimientosHoy as $item) {
+            if ($item->origen_caja_id && isset($cajasCerradasHoy[$item->origen_caja_id])) {
+                $item->origen_caja_id = null;
+            }
+            if ($item->destino_caja_id && isset($cajasCerradasHoy[$item->destino_caja_id])) {
+                $item->destino_caja_id = null;
+            }
+
             $denomId = $item->denominacion_id;
             $cant = (int) $item->total_cantidad;
             $monto = (float) $item->total_subtotal;
@@ -233,11 +266,19 @@ class DashboardController extends Controller
         foreach ($cajas as $caja) {
             $saldoInicialCajillas = 0.00;
             if ($caja->tipo_caja === 'boveda') {
-                $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                    ->orderBy('id', 'desc')
+                $cierreHoy = \App\Models\CierreDiario::where('caja_id', $caja->id)
+                    ->where('fecha_cierre', $start->toDateString())
                     ->first();
-                if ($ultimoCierreBoveda) {
-                    $saldoInicialCajillas = (float) $ultimoCierreBoveda->saldo_final_cajillas;
+                if ($cierreHoy) {
+                    $saldoInicialCajillas = (float) $cierreHoy->saldo_final_cajillas;
+                } else {
+                    $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
+                        ->where('created_at', '<', $start)
+                        ->orderBy('id', 'desc')
+                        ->first();
+                    if ($ultimoCierreBoveda) {
+                        $saldoInicialCajillas = (float) $ultimoCierreBoveda->saldo_final_cajillas;
+                    }
                 }
             }
 
@@ -248,6 +289,13 @@ class DashboardController extends Controller
             ];
         }
         foreach ($movimientosCajillas as $item) {
+            if ($item->origen_caja_id && isset($cajasCerradasHoy[$item->origen_caja_id])) {
+                $item->origen_caja_id = null;
+            }
+            if ($item->destino_caja_id && isset($cajasCerradasHoy[$item->destino_caja_id])) {
+                $item->destino_caja_id = null;
+            }
+
             $total = (float) $item->total;
             $categoria = $item->categoria_movimiento;
 
@@ -286,11 +334,19 @@ class DashboardController extends Controller
         foreach ($cajas as $caja) {
             $saldoInicialDeteriorados = 0.00;
             if ($caja->tipo_caja === 'boveda') {
-                $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                    ->orderBy('id', 'desc')
+                $cierreHoy = \App\Models\CierreDiario::where('caja_id', $caja->id)
+                    ->where('fecha_cierre', $start->toDateString())
                     ->first();
-                if ($ultimoCierreBoveda) {
-                    $saldoInicialDeteriorados = (float) $ultimoCierreBoveda->saldo_final_deteriorado;
+                if ($cierreHoy) {
+                    $saldoInicialDeteriorados = (float) $cierreHoy->saldo_final_deteriorado;
+                } else {
+                    $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
+                        ->where('created_at', '<', $start)
+                        ->orderBy('id', 'desc')
+                        ->first();
+                    if ($ultimoCierreBoveda) {
+                        $saldoInicialDeteriorados = (float) $ultimoCierreBoveda->saldo_final_deteriorado;
+                    }
                 }
             }
 
@@ -301,6 +357,13 @@ class DashboardController extends Controller
             ];
         }
         foreach ($movimientosDeteriorados as $item) {
+            if ($item->origen_caja_id && isset($cajasCerradasHoy[$item->origen_caja_id])) {
+                $item->origen_caja_id = null;
+            }
+            if ($item->destino_caja_id && isset($cajasCerradasHoy[$item->destino_caja_id])) {
+                $item->destino_caja_id = null;
+            }
+
             $total = (float) $item->total;
             $cat = $item->categoria_movimiento;
 
