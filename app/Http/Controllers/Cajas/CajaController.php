@@ -11,6 +11,9 @@ use App\Models\Denominacion;
 use App\Models\Movimiento;
 use App\Models\MovimientoDetalle;
 use App\Models\User;
+use App\Models\SolicitudApertura;
+use App\Models\SolicitudAperturaDetalle;
+use Carbon\Carbon;
 
 class CajaController extends Controller
 {
@@ -95,21 +98,102 @@ class CajaController extends Controller
         ]);
     }
 
-    // POST /api/cajas/{caja}/abrir
-    public function abrir(Request $request, Caja $caja)
+    // POST /api/cajas/{caja}/solicitar-apertura
+    public function solicitarApertura(Request $request, Caja $caja)
     {
         $request->validate([
             'detalles' => 'required|array|min:1',
             'detalles.*.denominacion_id' => 'required|exists:denominaciones,id',
             'detalles.*.estado_dinero' => 'required|in:bueno,deteriorado',
             'detalles.*.cantidad' => 'required|integer|min:0',
-            'supervisor_id' => 'nullable|exists:users,id'
+            'supervisor_id' => 'nullable|exists:users,id',
+            'observaciones' => 'nullable|string'
         ]);
 
         if (!$caja->usuario_id) {
             return response()->json([
-                'message' => 'La caja debe tener un usuario asignado en turno para poder abrirla.'
+                'message' => 'La caja debe tener un usuario asignado en turno para poder solicitar la apertura.'
             ], 422);
+        }
+
+        // --- VALIDACIÓN A: Caja ya abierta hoy ---
+        $yaAbiertaHoy = Movimiento::where('destino_caja_id', $caja->id)
+            ->where('categoria_movimiento', 'cajilla_apertura')
+            ->whereBetween('fecha_transaccion', [Carbon::today()->startOfDay(), Carbon::today()->endOfDay()])
+            ->exists();
+
+        if ($yaAbiertaHoy) {
+            return response()->json([
+                'message' => 'Operación denegada. Esta caja ya ha sido abierta en el transcurso del día de hoy y no puede abrirse dos veces.'
+            ], 422);
+        }
+
+        // Validar si ya existe una solicitud PENDIENTE para esta caja
+        $solicitudPendiente = SolicitudApertura::where('caja_id', $caja->id)
+            ->where('estado', 'pendiente')
+            ->exists();
+
+        if ($solicitudPendiente) {
+            return response()->json([
+                'message' => 'Ya existe una solicitud de apertura pendiente de revisión para esta caja.'
+            ], 400);
+        }
+
+        // --- VALIDACIÓN B: Stock en Bóveda para cajillas ---
+        $boveda = Caja::where('agencia_id', $caja->agencia_id)
+            ->where('tipo_caja', 'boveda')
+            ->where('estado', true)
+            ->first();
+
+        if ($boveda) {
+            $start = Carbon::today()->startOfDay();
+            $end = Carbon::today()->endOfDay();
+
+            // Buscar último cierre de Bóveda
+            $ultimoCierreBoveda = DB::table('cierres_diarios')
+                ->where('caja_id', $boveda->id)
+                ->orderBy('id', 'desc')
+                ->first();
+
+            foreach ($request->detalles as $det) {
+                $denomId = $det['denominacion_id'];
+                $cantSolicitada = (int) ($det['cantidad'] ?? 0);
+                if ($cantSolicitada <= 0) continue;
+
+                $cantidadInicialBoveda = 0;
+                if ($ultimoCierreBoveda) {
+                    $cantidadInicialBoveda = DB::table('cierre_diario_detalles')
+                        ->where('cierre_diario_id', $ultimoCierreBoveda->id)
+                        ->where('denominacion_id', $denomId)
+                        ->where('estado_dinero', 'cajillas')
+                        ->value('cantidad') ?? 0;
+                }
+
+                $ingresosBoveda = DB::table('movimiento_detalles')
+                    ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                    ->where('movimientos.destino_caja_id', $boveda->id)
+                    ->where('movimiento_detalles.denominacion_id', $denomId)
+                    ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                    ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'devolucion', 'cierre_jornada_barrido'])
+                    ->sum('movimiento_detalles.cantidad');
+
+                $egresosBoveda = DB::table('movimiento_detalles')
+                    ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                    ->where('movimientos.origen_caja_id', $boveda->id)
+                    ->where('movimiento_detalles.denominacion_id', $denomId)
+                    ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                    ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                    ->sum('movimiento_detalles.cantidad');
+
+                $cantDisponibleBoveda = (int) ($cantidadInicialBoveda + $ingresosBoveda - $egresosBoveda);
+
+                if ($cantSolicitada > $cantDisponibleBoveda) {
+                    $denomModel = Denominacion::find($denomId);
+                    return response()->json([
+                        'message' => "Saldo insuficiente en Bóveda para la denominación {$denomModel->nombre}. Solicitado: {$cantSolicitada}, Disponible en Bóveda: {$cantDisponibleBoveda}."
+                    ], 422);
+                }
+            }
         }
 
         // 1. Buscar último cierre
@@ -121,7 +205,7 @@ class CajaController extends Controller
 
         // 2. Calcular total declarado por cajero
         $totalDeclarado = 0;
-        $detallesMovimiento = [];
+        $detallesSolicitud = [];
 
         foreach ($request->detalles as $det) {
             $denom = Denominacion::find($det['denominacion_id']);
@@ -130,7 +214,7 @@ class CajaController extends Controller
             $totalDeclarado += $subtotal;
 
             if ($cant > 0) {
-                $detallesMovimiento[] = [
+                $detallesSolicitud[] = [
                     'denominacion_id' => $denom->id,
                     'cantidad' => $cant,
                     'subtotal' => $subtotal,
@@ -139,63 +223,201 @@ class CajaController extends Controller
             }
         }
 
-        // 3. Validar descuadre (Opción A: Bloqueo si no hay supervisor)
+        // 3. Calcular diferencia / descuadre
         $diferencia = $totalDeclarado - $saldoEsperado;
-        $descuadre = abs($diferencia) > 0.01;
 
-        if ($descuadre && !$request->filled('supervisor_id')) {
-            return response()->json([
-                'message' => 'Descuadre detectado en el arqueo inicial. Se requiere la autorización de un Supervisor para proceder.',
-                'descuadre' => true,
-                'diferencia' => $diferencia,
-                'total_declarado' => $totalDeclarado,
-                'saldo_esperado' => $saldoEsperado
-            ], 423); // Código 423 indica Locked / Descuadre bloqueado
-        }
-
-        // 4. Iniciar transacción e inyectar dotación inicial
-        return DB::transaction(function () use ($caja, $totalDeclarado, $detallesMovimiento, $request, $descuadre, $diferencia) {
-            $boveda = Caja::where('agencia_id', $caja->agencia_id)
-                ->where('tipo_caja', 'boveda')
-                ->where('estado', true)
-                ->first();
-
-            $descripcion = 'Dotación inicial de apertura (Arqueo de inicio).';
-            if ($descuadre) {
-                $supervisor = User::find($request->supervisor_id);
-                $descripcion .= " AUTORIZADO CON DESCUADRE de Q" . number_format($diferencia, 2) . " por Supervisor: " . ($supervisor ? $supervisor->name : "ID " . $request->supervisor_id);
-            }
-
-            // Crear el movimiento del Libro Mayor (Bóveda -> Caja)
-            // Si el monto total es 0, no inyectamos saldo contable pero dejamos pasar el registro.
-            // Para cajas nuevas o que cerraron en 0, el totalDeclarado es lo que físicamente tienen.
-            $movimiento = Movimiento::create([
-                'origen_caja_id' => $boveda ? $boveda->id : null,
-                'destino_caja_id' => $caja->id,
-                'tipo_operacion' => 'egreso',
-                'categoria_movimiento' => 'cajilla_apertura',
-                'descripcion' => $descripcion,
+        // 4. Crear la solicitud de apertura en la base de datos
+        return DB::transaction(function () use ($caja, $totalDeclarado, $detallesSolicitud, $request) {
+            $solicitud = SolicitudApertura::create([
+                'caja_id' => $caja->id,
+                'usuario_id' => $caja->usuario_id,
+                'supervisor_id' => $request->supervisor_id,
                 'monto_total' => $totalDeclarado,
-                'usuario_id' => auth()->id() ?? 1,
-                'fecha_transaccion' => now()
+                'estado' => 'pendiente',
+                'observaciones' => $request->observaciones
             ]);
 
-            // Guardar detalles del movimiento
-            foreach ($detallesMovimiento as $det) {
-                MovimientoDetalle::create([
-                    'movimiento_id' => $movimiento->id,
+            foreach ($detallesSolicitud as $det) {
+                SolicitudAperturaDetalle::create([
+                    'solicitud_id' => $solicitud->id,
                     'denominacion_id' => $det['denominacion_id'],
                     'cantidad' => $det['cantidad'],
                     'subtotal' => $det['subtotal'],
-                    'estado_dinero' => 'cajillas', // El dinero proviene de la reserva de cajillas
+                    'estado_dinero' => $det['estado_dinero']
                 ]);
             }
 
             return response()->json([
-                'message' => 'Caja abierta y dotación inicial registrada correctamente.',
-                'movimiento' => $movimiento->load('detalles.denominacion')
+                'message' => 'Solicitud de apertura enviada exitosamente para revisión.',
+                'solicitud' => $solicitud->load('detalles.denominacion')
             ], 201);
         });
+    }
+
+    // GET /api/cajas/solicitudes/pendientes
+    public function listarSolicitudesPendientes(Request $request)
+    {
+        $query = SolicitudApertura::with(['caja.agencia', 'usuario', 'supervisor', 'detalles.denominacion'])
+            ->where('estado', 'pendiente');
+
+        if ($request->has('agencia_id')) {
+            $query->whereHas('caja', function($q) use ($request) {
+                $q->where('agencia_id', $request->agencia_id);
+            });
+        }
+
+        return response()->json($query->get());
+    }
+
+    // POST /api/cajas/solicitudes/{id}/procesar
+    public function procesarSolicitud(Request $request, $id)
+    {
+        $request->validate([
+            'accion' => 'required|in:aprobado,rechazado',
+            'observaciones' => 'nullable|string'
+        ]);
+
+        $solicitud = SolicitudApertura::with(['detalles', 'caja'])->findOrFail($id);
+
+        if ($solicitud->estado !== 'pendiente') {
+            return response()->json([
+                'message' => 'Esta solicitud ya ha sido procesada anteriormente.'
+            ], 400);
+        }
+
+        $autorizadorId = auth()->id() ?? 1;
+
+        if ($request->accion === 'rechazado') {
+            $solicitud->update([
+                'estado' => 'rechazado',
+                'usuario_autorizador_id' => $autorizadorId,
+                'observaciones' => $request->observaciones,
+                'fecha_autorizacion' => now()
+            ]);
+
+            return response()->json([
+                'message' => 'Solicitud de apertura rechazada correctamente.',
+                'solicitud' => $solicitud
+            ]);
+        }
+
+        // Si es Aprobado, creamos el movimiento en el Libro Mayor
+        try {
+            return DB::transaction(function () use ($solicitud, $request, $autorizadorId) {
+                $caja = $solicitud->caja;
+                
+                // Buscar la bóveda de la agencia correspondiente
+                $boveda = Caja::where('agencia_id', $caja->agencia_id)
+                    ->where('tipo_caja', 'boveda')
+                    ->where('estado', true)
+                    ->first();
+
+                // --- VALIDACIÓN: Verificar disponibilidad en Bóveda hoy al aprobar ---
+                if ($boveda) {
+                    $start = Carbon::today()->startOfDay();
+                    $end = Carbon::today()->endOfDay();
+
+                    $ultimoCierreBoveda = DB::table('cierres_diarios')
+                        ->where('caja_id', $boveda->id)
+                        ->orderBy('id', 'desc')
+                        ->first();
+
+                    foreach ($solicitud->detalles as $det) {
+                        $denomId = $det->denominacion_id;
+                        $cantSolicitada = (int) $det->cantidad;
+                        if ($cantSolicitada <= 0) continue;
+
+                        $cantidadInicialBoveda = 0;
+                        if ($ultimoCierreBoveda) {
+                            $cantidadInicialBoveda = DB::table('cierre_diario_detalles')
+                                ->where('cierre_diario_id', $ultimoCierreBoveda->id)
+                                ->where('denominacion_id', $denomId)
+                                ->where('estado_dinero', 'cajillas')
+                                ->value('cantidad') ?? 0;
+                        }
+
+                        $ingresosBoveda = DB::table('movimiento_detalles')
+                            ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                            ->where('movimientos.destino_caja_id', $boveda->id)
+                            ->where('movimiento_detalles.denominacion_id', $denomId)
+                            ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                            ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'devolucion', 'cierre_jornada_barrido'])
+                            ->sum('movimiento_detalles.cantidad');
+
+                        $egresosBoveda = DB::table('movimiento_detalles')
+                            ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                            ->where('movimientos.origen_caja_id', $boveda->id)
+                            ->where('movimiento_detalles.denominacion_id', $denomId)
+                            ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                            ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                            ->sum('movimiento_detalles.cantidad');
+
+                        $cantDisponibleBoveda = (int) ($cantidadInicialBoveda + $ingresosBoveda - $egresosBoveda);
+
+                        if ($cantSolicitada > $cantDisponibleBoveda) {
+                            $denomModel = Denominacion::find($denomId);
+                            // Lanzamos excepción específica para atraparla y abortar
+                            throw new \Exception("Aprobación fallida: Saldo insuficiente en Bóveda para la denominación {$denomModel->nombre}. Solicitado: {$cantSolicitada}, Disponible: {$cantDisponibleBoveda}.");
+                        }
+                    }
+                }
+
+                $diferencia = 0;
+                // Calcular descuadre si lo hubo buscando último cierre
+                $ultimoCierre = CierreDiario::where('caja_id', $caja->id)
+                    ->orderBy('id', 'desc')
+                    ->first();
+                $saldoEsperado = $ultimoCierre ? (float) $ultimoCierre->saldo_final_fisico_declarado : 0.00;
+                $diferencia = $solicitud->monto_total - $saldoEsperado;
+                $descuadre = abs($diferencia) > 0.01;
+
+                $descripcion = 'Dotación inicial de apertura (Autorizada).';
+                if ($descuadre && $solicitud->supervisor_id) {
+                    $supervisor = User::find($solicitud->supervisor_id);
+                    $descripcion .= " AUTORIZADO CON DESCUADRE de Q" . number_format($diferencia, 2) . " por Supervisor: " . ($supervisor ? $supervisor->name : "ID " . $solicitud->supervisor_id);
+                }
+
+                // Crear el movimiento del Libro Mayor (Bóveda -> Caja)
+                $movimiento = Movimiento::create([
+                    'origen_caja_id' => $boveda ? $boveda->id : null,
+                    'destino_caja_id' => $caja->id,
+                    'tipo_operacion' => 'egreso',
+                    'categoria_movimiento' => 'cajilla_apertura',
+                    'descripcion' => $descripcion . ($request->observaciones ? ' Obs: ' . $request->observaciones : ''),
+                    'monto_total' => $solicitud->monto_total,
+                    'usuario_id' => $solicitud->usuario_id,
+                    'fecha_transaccion' => now()
+                ]);
+
+                // Guardar detalles del movimiento
+                foreach ($solicitud->detalles as $det) {
+                    MovimientoDetalle::create([
+                        'movimiento_id' => $movimiento->id,
+                        'denominacion_id' => $det->denominacion_id,
+                        'cantidad' => $det->cantidad,
+                        'subtotal' => $det->subtotal,
+                        'estado_dinero' => 'cajillas', // El dinero proviene de la reserva de cajillas
+                    ]);
+                }
+
+                // Actualizar estado de la solicitud
+                $solicitud->update([
+                    'estado' => 'aprobado',
+                    'usuario_autorizador_id' => $autorizadorId,
+                    'observaciones' => $request->observaciones,
+                    'fecha_autorizacion' => now()
+                ]);
+
+                return response()->json([
+                    'message' => 'Solicitud aprobada y caja abierta con éxito.',
+                    'solicitud' => $solicitud->load('caja')
+                ]);
+            });
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => $e->getMessage()
+            ], 422);
+        }
     }
 
     // POST /api/cajas/{caja}/dia-cero

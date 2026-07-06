@@ -34,7 +34,9 @@ Route::middleware('sso')->group(function () {
     Route::apiResource('cajas/cierres-diarios', CierreDiarioController::class)->only(['index', 'store', 'show']);
 
     Route::get('cajas/{caja}/estado-apertura', [CajaController::class, 'estadoApertura']);
-    Route::post('cajas/{caja}/abrir', [CajaController::class, 'abrir']);
+    Route::post('cajas/{caja}/solicitar-apertura', [CajaController::class, 'solicitarApertura']);
+    Route::get('cajas/solicitudes/pendientes', [CajaController::class, 'listarSolicitudesPendientes']);
+    Route::post('cajas/solicitudes/{id}/procesar', [CajaController::class, 'procesarSolicitud']);
     Route::post('cajas/{caja}/dia-cero', [CajaController::class, 'inicializarDiaCero']);
     Route::get('cajas/{caja}/saldo-actual', [CierreDiarioController::class, 'getSaldoActual']);
 
