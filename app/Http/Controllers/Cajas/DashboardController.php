@@ -73,8 +73,8 @@ class DashboardController extends Controller
         foreach ($cajas as $caja) {
             $matriz[$caja->id] = [];
             
-            // Si la Bóveda de la sucursal ya cerró hoy, marcamos tanto la Bóveda como la Caja General como cerradas
-            if ($bovedaCerradaHoy && in_array($caja->tipo_caja, ['boveda', 'general'])) {
+            // Si la Bóveda de la sucursal ya cerró hoy, marcamos TODAS las cajas como cerradas hoy
+            if ($bovedaCerradaHoy) {
                 $cajasCerradasHoy[$caja->id] = true;
             }
 
@@ -85,14 +85,16 @@ class DashboardController extends Controller
                 ->first();
 
             $ultimoCierre = null;
-            if ($cierreHoy) {
+            // Si la caja ya cerró hoy o si la bóveda ya cerró hoy (y existe cierre consolidado de hoy para esta caja), tomamos el cierre de hoy y la marcamos como cerrada
+            if ($cierreHoy && ($caja->tipo_caja === 'boveda' || $bovedaCerradaHoy)) {
                 $ultimoCierre = $cierreHoy;
-                $cajasCerradasHoy[$caja->id] = true; // Por seguridad
-            } elseif ($caja->tipo_caja === 'boveda') {
-                // Si no hay cierre hoy, buscamos el cierre de la jornada anterior
+                $cajasCerradasHoy[$caja->id] = true;
+            } else {
+                // En cualquier otro caso, tomamos el cierre de la jornada anterior como saldo inicial.
                 $ultimoCierre = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                    ->where('created_at', '<', $start)
+                    ->where('fecha_cierre', '<', $start->toDateString())
                     ->with('detalles')
+                    ->orderBy('fecha_cierre', 'desc')
                     ->orderBy('id', 'desc')
                     ->first();
             }
@@ -273,7 +275,8 @@ class DashboardController extends Controller
                     $saldoInicialCajillas = (float) $cierreHoy->saldo_final_cajillas;
                 } else {
                     $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                        ->where('created_at', '<', $start)
+                        ->where('fecha_cierre', '<', $start->toDateString())
+                        ->orderBy('fecha_cierre', 'desc')
                         ->orderBy('id', 'desc')
                         ->first();
                     if ($ultimoCierreBoveda) {
@@ -341,7 +344,8 @@ class DashboardController extends Controller
                     $saldoInicialDeteriorados = (float) $cierreHoy->saldo_final_deteriorado;
                 } else {
                     $ultimoCierreBoveda = \App\Models\CierreDiario::where('caja_id', $caja->id)
-                        ->where('created_at', '<', $start)
+                        ->where('fecha_cierre', '<', $start->toDateString())
+                        ->orderBy('fecha_cierre', 'desc')
                         ->orderBy('id', 'desc')
                         ->first();
                     if ($ultimoCierreBoveda) {
