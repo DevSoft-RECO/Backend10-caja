@@ -306,7 +306,7 @@ class MovimientoController extends Controller
         try {
             return DB::transaction(function () use ($solicitud, $request, $autorizadorId) {
                 // --- VALIDACIÓN DE STOCK: Comprobar inventario del Origen hoy al aprobar ---
-                if ($solicitud->origen_caja_id) {
+                if ($solicitud->tipo_operacion === 'egreso' && $solicitud->origen_caja_id) {
                     $origen = $solicitud->origen;
                     $start = Carbon::today()->startOfDay();
                     $end = Carbon::today()->endOfDay();
