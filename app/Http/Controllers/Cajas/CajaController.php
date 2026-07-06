@@ -543,4 +543,94 @@ class CajaController extends Controller
         });
     }
 
+    public function obtenerStock(Caja $caja)
+    {
+        $denominaciones = \App\Models\Denominacion::where('activo', true)
+            ->orderBy('valor', 'desc')
+            ->get();
+
+        $start = Carbon::today()->startOfDay();
+        $end = Carbon::today()->endOfDay();
+
+        $ultimoCierre = DB::table('cierres_diarios')
+            ->where('caja_id', $caja->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $stock = [];
+
+        foreach ($denominaciones as $denom) {
+            $denomId = $denom->id;
+
+            // 1. Stock bueno (cajillas para bóvedas, bueno para ventanillas/general)
+            $estadoDineroBueno = ($caja->tipo_caja === 'boveda') ? 'cajillas' : 'bueno';
+            
+            $cantInicialBueno = 0;
+            if ($ultimoCierre) {
+                $cantInicialBueno = DB::table('cierre_diario_detalles')
+                    ->where('cierre_diario_id', $ultimoCierre->id)
+                    ->where('denominacion_id', $denomId)
+                    ->where('estado_dinero', $estadoDineroBueno)
+                    ->value('cantidad') ?? 0;
+            }
+
+            $ingresosBueno = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.destino_caja_id', $caja->id)
+                ->where('movimiento_detalles.denominacion_id', $denomId)
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->where('movimiento_detalles.estado_dinero', $estadoDineroBueno)
+                ->sum('movimiento_detalles.cantidad');
+
+            $egresosBueno = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.origen_caja_id', $caja->id)
+                ->where('movimiento_detalles.denominacion_id', $denomId)
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->where('movimiento_detalles.estado_dinero', $estadoDineroBueno)
+                ->sum('movimiento_detalles.cantidad');
+
+            $stockBueno = (int) ($cantInicialBueno + $ingresosBueno - $egresosBueno);
+
+            // 2. Stock deteriorado
+            $cantInicialDeteriorado = 0;
+            if ($ultimoCierre) {
+                $cantInicialDeteriorado = DB::table('cierre_diario_detalles')
+                    ->where('cierre_diario_id', $ultimoCierre->id)
+                    ->where('denominacion_id', $denomId)
+                    ->where('estado_dinero', 'deteriorado')
+                    ->value('cantidad') ?? 0;
+            }
+
+            $ingresosDeteriorado = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.destino_caja_id', $caja->id)
+                ->where('movimiento_detalles.denominacion_id', $denomId)
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->where('movimiento_detalles.estado_dinero', 'deteriorado')
+                ->sum('movimiento_detalles.cantidad');
+
+            $egresosDeteriorado = DB::table('movimiento_detalles')
+                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                ->where('movimientos.origen_caja_id', $caja->id)
+                ->where('movimiento_detalles.denominacion_id', $denomId)
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->where('movimiento_detalles.estado_dinero', 'deteriorado')
+                ->sum('movimiento_detalles.cantidad');
+
+            $stockDeteriorado = (int) ($cantInicialDeteriorado + $ingresosDeteriorado - $egresosDeteriorado);
+
+            $stock[] = [
+                'denominacion_id' => $denomId,
+                'nombre' => $denom->nombre,
+                'valor' => (float) $denom->valor,
+                'tipo' => $denom->tipo,
+                'stock_bueno' => max(0, $stockBueno),
+                'stock_deteriorado' => max(0, $stockDeteriorado),
+            ];
+        }
+
+        return response()->json($stock);
+    }
+
 }

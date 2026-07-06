@@ -39,6 +39,7 @@ Route::middleware('sso')->group(function () {
     Route::post('cajas/solicitudes/{id}/procesar', [CajaController::class, 'procesarSolicitud']);
     Route::post('cajas/{caja}/dia-cero', [CajaController::class, 'inicializarDiaCero']);
     Route::get('cajas/{caja}/saldo-actual', [CierreDiarioController::class, 'getSaldoActual']);
+    Route::get('cajas/{caja}/stock-denominaciones', [CajaController::class, 'obtenerStock']);
 
     // Gestión de Cajas
     Route::apiResource('cajas', CajaController::class)->except(['destroy']); // Quitamos destroy para no romper transaccionalidad
