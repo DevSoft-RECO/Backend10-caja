@@ -46,6 +46,10 @@ Route::middleware('sso')->group(function () {
 
     // Movimientos
     Route::apiResource('movimientos', MovimientoController::class)->only(['index', 'store']);
+    Route::post('movimientos/solicitar', [MovimientoController::class, 'solicitar']);
+    Route::get('movimientos/solicitudes/pendientes', [MovimientoController::class, 'listarSolicitudesPendientes']);
+    Route::post('movimientos/solicitudes/{id}/procesar', [MovimientoController::class, 'procesarSolicitud']);
+    Route::delete('movimientos/solicitudes/{id}', [MovimientoController::class, 'eliminarSolicitud']);
     Route::post('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'store']);
     Route::post('cajas/bancos-operacion', [BancosOperacionController::class, 'store']);
 
