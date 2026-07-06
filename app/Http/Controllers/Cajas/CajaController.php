@@ -574,21 +574,31 @@ class CajaController extends Controller
                     ->value('cantidad') ?? 0;
             }
 
-            $ingresosBueno = DB::table('movimiento_detalles')
+            $ingresosBuenoQuery = DB::table('movimiento_detalles')
                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                 ->where('movimientos.destino_caja_id', $caja->id)
                 ->where('movimiento_detalles.denominacion_id', $denomId)
-                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                ->where('movimiento_detalles.estado_dinero', $estadoDineroBueno)
-                ->sum('movimiento_detalles.cantidad');
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
 
-            $egresosBueno = DB::table('movimiento_detalles')
+            if ($caja->tipo_caja === 'boveda') {
+                $ingresosBuenoQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
+            } else {
+                $ingresosBuenoQuery->where('movimiento_detalles.estado_dinero', 'bueno');
+            }
+            $ingresosBueno = $ingresosBuenoQuery->sum('movimiento_detalles.cantidad');
+
+            $egresosBuenoQuery = DB::table('movimiento_detalles')
                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                 ->where('movimientos.origen_caja_id', $caja->id)
                 ->where('movimiento_detalles.denominacion_id', $denomId)
-                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                ->where('movimiento_detalles.estado_dinero', $estadoDineroBueno)
-                ->sum('movimiento_detalles.cantidad');
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
+
+            if ($caja->tipo_caja === 'boveda') {
+                $egresosBuenoQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
+            } else {
+                $egresosBuenoQuery->where('movimiento_detalles.estado_dinero', 'bueno');
+            }
+            $egresosBueno = $egresosBuenoQuery->sum('movimiento_detalles.cantidad');
 
             $stockBueno = (int) ($cantInicialBueno + $ingresosBueno - $egresosBueno);
 

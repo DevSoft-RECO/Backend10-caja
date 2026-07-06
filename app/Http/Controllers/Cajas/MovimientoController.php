@@ -335,21 +335,31 @@ class MovimientoController extends Controller
                             }
 
                             // Calcular movimientos del día para dinero bueno
-                            $ingresos = DB::table('movimiento_detalles')
-                                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
-                                ->where('movimientos.destino_caja_id', $origen->id)
-                                ->where('movimiento_detalles.denominacion_id', $denomId)
-                                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                                ->where('movimiento_detalles.estado_dinero', $estadoDinero)
-                                ->sum('movimiento_detalles.cantidad');
+                            $ingresosQuery = DB::table('movimiento_detalles')
+                                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                                 ->where('movimientos.destino_caja_id', $origen->id)
+                                 ->where('movimiento_detalles.denominacion_id', $denomId)
+                                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
 
-                            $egresos = DB::table('movimiento_detalles')
-                                ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
-                                ->where('movimientos.origen_caja_id', $origen->id)
-                                ->where('movimiento_detalles.denominacion_id', $denomId)
-                                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                                ->where('movimiento_detalles.estado_dinero', $estadoDinero)
-                                ->sum('movimiento_detalles.cantidad');
+                             if ($origen->tipo_caja === 'boveda') {
+                                 $ingresosQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
+                             } else {
+                                 $ingresosQuery->where('movimiento_detalles.estado_dinero', 'bueno');
+                             }
+                             $ingresos = $ingresosQuery->sum('movimiento_detalles.cantidad');
+ 
+                             $egresosQuery = DB::table('movimiento_detalles')
+                                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
+                                 ->where('movimientos.origen_caja_id', $origen->id)
+                                 ->where('movimiento_detalles.denominacion_id', $denomId)
+                                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
+
+                             if ($origen->tipo_caja === 'boveda') {
+                                 $egresosQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
+                             } else {
+                                 $egresosQuery->where('movimiento_detalles.estado_dinero', 'bueno');
+                             }
+                             $egresos = $egresosQuery->sum('movimiento_detalles.cantidad');
 
                             $cantDisponible = (int) ($cantidadInicial + $ingresos - $egresos);
 
@@ -414,11 +424,12 @@ class MovimientoController extends Controller
                     $destinoTipo = $solicitud->destino ? $solicitud->destino->tipo_caja : 'ventanilla';
 
                     if ($det->cantidad_buena > 0) {
-                        // Determinar el compartimento contable
-                        $estadoDinero = 'bueno';
-                        if ($origenTipo === 'boveda' || $destinoTipo === 'boveda') {
-                            $estadoDinero = 'cajillas'; // Flujo de efectivo bueno hacia/desde Bóveda
-                        }
+                         // Determinar el compartimento contable
+                         $estadoDinero = 'bueno';
+                         $esOperacionOrdinaria = in_array($solicitud->categoria_movimiento, ['abastecimiento', 'devolucion']);
+                         if (!$esOperacionOrdinaria && ($origenTipo === 'boveda' || $destinoTipo === 'boveda')) {
+                             $estadoDinero = 'cajillas'; // Flujo de efectivo bueno hacia/desde Bóveda para otras operaciones (ej: apertura/cierre de cajillas)
+                         }
 
                         MovimientoDetalle::create([
                             'movimiento_id' => $movimiento->id,
