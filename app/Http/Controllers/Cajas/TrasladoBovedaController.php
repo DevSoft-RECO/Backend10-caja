@@ -403,20 +403,71 @@ class TrasladoBovedaController extends Controller
         }
     }
 
-    /**
-     * Cancelar solicitud
-     */
     public function destroy($id)
     {
-        $solicitud = SolicitudTrasladoBoveda::findOrFail($id);
+        $solicitud = SolicitudTrasladoBoveda::with('detalles')->findOrFail($id);
 
-        // Solo se puede cancelar si no ha sido enviado
-        if (in_array($solicitud->estado, ['pendiente', 'solicitud_recibida', 'programado'])) {
-            $solicitud->update(['estado' => 'cancelado']);
-            return response()->json(['message' => 'Traslado cancelado correctamente.', 'solicitud' => $solicitud]);
+        if (in_array($solicitud->estado, ['ingresado', 'cancelado'])) {
+            return response()->json(['message' => 'No se puede cancelar un traslado que ya ha sido ingresado o cancelado.'], 422);
         }
 
-        return response()->json(['message' => 'No se puede cancelar la solicitud porque ya ha sido enviada o procesada.'], 422);
+        DB::beginTransaction();
+        try {
+            // Si el dinero ya fue enviado pero no se ha confirmado el ingreso
+            if (in_array($solicitud->estado, ['enviado', 'enterado', 'paquete_recibido'])) {
+                $bovedaOrigen = Caja::findOrFail($solicitud->origen_boveda_id);
+
+                $cajaGeneralOrigen = Caja::where('tipo_caja', 'general')
+                    ->where('agencia_id', $bovedaOrigen->agencia_id)
+                    ->where('estado', true)
+                    ->first();
+
+                if (!$cajaGeneralOrigen) {
+                    DB::rollBack();
+                    return response()->json([
+                        'message' => 'No se encontró una Caja General activa en la agencia de origen para realizar la reversión.'
+                    ], 422);
+                }
+
+                // Registrar el movimiento de reingreso (Ingreso)
+                $movimientoIngreso = Movimiento::create([
+                    'origen_caja_id' => $cajaGeneralOrigen->id,
+                    'destino_caja_id' => $bovedaOrigen->id,
+                    'tipo_operacion' => 'ingreso',
+                    'categoria_movimiento' => 'traslado_boveda',
+                    'monto_total' => $solicitud->monto_total,
+                    'usuario_id' => auth()->id() ?? User::first()->id,
+                    'fecha_transaccion' => Carbon::now(),
+                    'comentario' => "Reversión por cancelación de traslado de envío #{$solicitud->id}."
+                ]);
+
+                foreach ($solicitud->detalles as $det) {
+                    MovimientoDetalle::create([
+                        'movimiento_id' => $movimientoIngreso->id,
+                        'denominacion_id' => $det->denominacion_id,
+                        'cantidad' => $det->cantidad,
+                        'subtotal' => $det->subtotal,
+                        'estado_dinero' => 'bueno'
+                    ]);
+                }
+            }
+
+            // Cambiar estado a cancelado
+            $solicitud->update(['estado' => 'cancelado']);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Traslado cancelado y fondos reversados correctamente.',
+                'solicitud' => $solicitud
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Error al cancelar y reversar el traslado: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
