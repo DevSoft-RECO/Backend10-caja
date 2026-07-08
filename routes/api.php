@@ -33,6 +33,17 @@ Route::middleware('sso')->group(function () {
     Route::apiResource('cajas/conteos-parciales', ConteoParcialController::class)->only(['index', 'store', 'show', 'destroy']);
     Route::apiResource('cajas/cierres-diarios', CierreDiarioController::class)->only(['index', 'store', 'show']);
 
+    // Traslados entre Bóvedas (Debe ir antes de cajas/{caja} para evitar colisión de wildcards)
+    Route::get('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'index']);
+    Route::post('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'store']);
+    Route::post('cajas/traslado-bovedas/{id}/confirmar-recepcion', [TrasladoBovedaController::class, 'confirmarRecepcionSolicitud']);
+    Route::post('cajas/traslado-bovedas/{id}/programar-fecha', [TrasladoBovedaController::class, 'programarFecha']);
+    Route::post('cajas/traslado-bovedas/{id}/enviar-efectivo', [TrasladoBovedaController::class, 'enviarEfectivo']);
+    Route::post('cajas/traslado-bovedas/{id}/confirmar-recepcion-paquete', [TrasladoBovedaController::class, 'confirmarRecepcionPaquete']);
+    Route::post('cajas/traslado-bovedas/{id}/marcar-enterado', [TrasladoBovedaController::class, 'marcarEnterado']);
+    Route::post('cajas/traslado-bovedas/{id}/confirmar-ingreso', [TrasladoBovedaController::class, 'confirmarIngresoEfectivo']);
+    Route::delete('cajas/traslado-bovedas/{id}', [TrasladoBovedaController::class, 'destroy']);
+
     Route::get('cajas/{caja}/estado-apertura', [CajaController::class, 'estadoApertura']);
     Route::post('cajas/{caja}/solicitar-apertura', [CajaController::class, 'solicitarApertura']);
     Route::get('cajas/solicitudes/pendientes', [CajaController::class, 'listarSolicitudesPendientes']);
@@ -51,7 +62,6 @@ Route::middleware('sso')->group(function () {
     Route::get('movimientos/solicitudes/pendientes', [MovimientoController::class, 'listarSolicitudesPendientes']);
     Route::post('movimientos/solicitudes/{id}/procesar', [MovimientoController::class, 'procesarSolicitud']);
     Route::delete('movimientos/solicitudes/{id}', [MovimientoController::class, 'eliminarSolicitud']);
-    Route::post('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'store']);
     Route::post('cajas/bancos-operacion', [BancosOperacionController::class, 'store']);
 
     // Rutas Auxiliares para formularios
