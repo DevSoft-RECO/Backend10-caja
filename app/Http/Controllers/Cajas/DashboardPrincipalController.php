@@ -19,6 +19,11 @@ class DashboardPrincipalController extends Controller
         $agencias = \App\Models\Agencia::orderBy('nombre')->get();
         $denominaciones = Denominacion::where('activo', true)->orderBy('valor', 'desc')->get();
 
+        // Obtener traslados que andan físicamente en tránsito con relación a agencias
+        $trasladosEnTransito = \App\Models\SolicitudTrasladoBoveda::whereIn('estado', ['enviado', 'enterado', 'paquete_recibido'])
+            ->with(['origenBoveda.agencia', 'destinoBoveda.agencia'])
+            ->get();
+
         $resultado = [];
 
         foreach ($agencias as $agencia) {
@@ -29,11 +34,34 @@ class DashboardPrincipalController extends Controller
                 ->where('agencia_id', $agenciaId)
                 ->get();
 
+            // Calcular tránsito entrante y saliente para esta agencia con desglose
+            $entranteCol = $trasladosEnTransito->where('destinoBoveda.agencia_id', $agenciaId);
+            $entrante = $entranteCol->sum('monto_total');
+            $entranteDetalles = $entranteCol->map(function($t) {
+                return [
+                    'agencia' => $t->origenBoveda->agencia->nombre ?? 'Desconocida',
+                    'monto' => (float)$t->monto_total
+                ];
+            })->values()->toArray();
+
+            $salienteCol = $trasladosEnTransito->where('origenBoveda.agencia_id', $agenciaId);
+            $saliente = $salienteCol->sum('monto_total');
+            $salienteDetalles = $salienteCol->map(function($t) {
+                return [
+                    'agencia' => $t->destinoBoveda->agencia->nombre ?? 'Desconocida',
+                    'monto' => (float)$t->monto_total
+                ];
+            })->values()->toArray();
+
             if ($cajas->isEmpty()) {
                 $resultado[] = [
                     'id' => $agencia->id,
                     'nombre' => $agencia->nombre,
-                    'saldo_disponible' => 0.00
+                    'saldo_disponible' => 0.00,
+                    'en_transito_entrante' => (float)$entrante,
+                    'en_transito_entrante_detalles' => $entranteDetalles,
+                    'en_transito_saliente' => (float)$saliente,
+                    'en_transito_saliente_detalles' => $salienteDetalles
                 ];
                 continue;
             }
@@ -369,10 +397,27 @@ class DashboardPrincipalController extends Controller
             $resultado[] = [
                 'id' => $agencia->id,
                 'nombre' => $agencia->nombre,
-                'saldo_disponible' => (float)$saldoAgenciaTotal
+                'saldo_disponible' => (float)$saldoAgenciaTotal,
+                'en_transito_entrante' => (float)$entrante,
+                'en_transito_entrante_detalles' => $entranteDetalles,
+                'en_transito_saliente' => (float)$saliente,
+                'en_transito_saliente_detalles' => $salienteDetalles
             ];
         }
 
-        return response()->json($resultado);
+        return response()->json([
+            'agencias' => $resultado,
+            'traslados_en_transito' => $trasladosEnTransito->map(function($t) {
+                return [
+                    'id' => $t->id,
+                    'origen_agencia' => $t->origenBoveda->agencia->nombre ?? 'Desconocida',
+                    'destino_agencia' => $t->destinoBoveda->agencia->nombre ?? 'Desconocida',
+                    'repartidor' => $t->repartidor ?? 'No especificado',
+                    'monto' => (float)$t->monto_total,
+                    'estado' => $t->estado,
+                    'fecha_envio' => $t->updated_at->toDateTimeString()
+                ];
+            })->values()->toArray()
+        ]);
     }
 }
