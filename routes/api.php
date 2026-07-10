@@ -10,6 +10,7 @@ use App\Http\Controllers\Cajas\MovimientoController;
 use App\Http\Controllers\Cajas\ConteoParcialController;
 use App\Http\Controllers\Cajas\CierreDiarioController;
 use App\Http\Controllers\Cajas\DashboardController;
+use App\Http\Controllers\Cajas\DashboardPrincipalController;
 use App\Http\Controllers\Cajas\TrasladoBovedaController;
 use App\Http\Controllers\Cajas\BancosOperacionController;
 
@@ -18,6 +19,7 @@ Route::middleware('sso')->group(function () {
     
     // Dashboard General
     Route::get('reportes/dashboard-general', [DashboardController::class, 'dashboardGeneral']);
+    Route::get('reportes/saldos-agencias', [DashboardPrincipalController::class, 'saldosAgencias']);
     Route::get('cajas/{caja}/inventario-deteriorado', [DashboardController::class, 'obtenerInventarioDeteriorado']);
     Route::get('cajas/{caja}/inventario-cajillas', [DashboardController::class, 'obtenerInventarioCajillas']);
     
