@@ -36,7 +36,8 @@ class MovimientoController extends Controller
             $query->whereDate('fecha_transaccion', '<=', $request->fecha_hasta);
         }
 
-        return response()->json($query->get());
+        $perPage = $request->input('per_page', 10);
+        return response()->json($query->paginate($perPage));
     }
 
     public function store(Request $request)
