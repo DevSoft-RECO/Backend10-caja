@@ -60,6 +60,21 @@ return [
             'report' => false,
         ],
 
+        'gcs' => [
+            'driver' => 'gcs',
+            'key_file' => (env('GOOGLE_CLOUD_KEY_FILE') && file_exists(storage_path('app/' . env('GOOGLE_CLOUD_KEY_FILE'))))
+                ? json_decode(file_get_contents(storage_path('app/' . env('GOOGLE_CLOUD_KEY_FILE'))), true)
+                : null,
+            'project_id' => env('GOOGLE_CLOUD_PROJECT_ID'),
+            'bucket' => env('GOOGLE_CLOUD_STORAGE_BUCKET'),
+
+            // ESTA ES LA LÍNEA MÁGICA DE LA GUÍA:
+            'visibility_handler' => \League\Flysystem\GoogleCloudStorage\UniformBucketLevelAccessVisibility::class,
+
+            // Opcional pero recomendado para evitar confusiones
+            'visibility' => 'private',
+        ],
+
     ],
 
     /*

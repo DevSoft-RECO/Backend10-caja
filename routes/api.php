@@ -13,6 +13,7 @@ use App\Http\Controllers\Cajas\DashboardController;
 use App\Http\Controllers\Cajas\DashboardPrincipalController;
 use App\Http\Controllers\Cajas\TrasladoBovedaController;
 use App\Http\Controllers\Cajas\BancosOperacionController;
+use App\Http\Controllers\Cajas\SolicitudReversionController;
 
 // Asegúrate de que el middleware 'sso' esté registrado en bootstrap/app.php
 Route::middleware('sso')->group(function () {
@@ -65,6 +66,12 @@ Route::middleware('sso')->group(function () {
     Route::post('movimientos/solicitudes/{id}/procesar', [MovimientoController::class, 'procesarSolicitud']);
     Route::delete('movimientos/solicitudes/{id}', [MovimientoController::class, 'eliminarSolicitud']);
     Route::post('cajas/bancos-operacion', [BancosOperacionController::class, 'store']);
+
+    // Reversiones de Caja
+    Route::get('reversiones', [SolicitudReversionController::class, 'index']);
+    Route::post('reversiones', [SolicitudReversionController::class, 'store']);
+    Route::post('reversiones/{id}/procesar', [SolicitudReversionController::class, 'procesar']);
+    Route::delete('reversiones/{id}', [SolicitudReversionController::class, 'destroy']);
 
     // Rutas Auxiliares para formularios
     Route::get('agencias', function () {
