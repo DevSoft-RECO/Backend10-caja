@@ -394,6 +394,8 @@ class DashboardPrincipalController extends Controller
                 $saldoAgenciaTotal += ($saldoCajaDenoms + $saldoCajaEspeciales);
             }
 
+            $polizaBoveda = $bovedaAgencia ? (float)$bovedaAgencia->poliza : 0.00;
+
             $resultado[] = [
                 'id' => $agencia->id,
                 'nombre' => $agencia->nombre,
@@ -401,7 +403,8 @@ class DashboardPrincipalController extends Controller
                 'en_transito_entrante' => (float)$entrante,
                 'en_transito_entrante_detalles' => $entranteDetalles,
                 'en_transito_saliente' => (float)$saliente,
-                'en_transito_saliente_detalles' => $salienteDetalles
+                'en_transito_saliente_detalles' => $salienteDetalles,
+                'poliza_limite' => $polizaBoveda,
             ];
         }
 
