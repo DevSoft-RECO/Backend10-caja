@@ -15,10 +15,12 @@ class Caja extends Model
         'tipo_caja',
         'usuario_id',
         'estado',
+        'poliza',
     ];
 
     protected $casts = [
         'estado' => 'boolean',
+        'poliza' => 'float',
     ];
 
     // Relación con tu tabla existente de Agencias

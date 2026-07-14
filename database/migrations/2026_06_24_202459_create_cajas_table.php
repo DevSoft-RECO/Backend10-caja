@@ -20,6 +20,7 @@ return new class extends Migration
             // El usuario_id es nullable porque las cajas se abren y cierran por distintos usuarios
             $table->foreignId('usuario_id')->nullable()->constrained('users')->onDelete('set null'); 
             $table->boolean('estado')->default(true); // true = Abierta/Activa
+            $table->decimal('poliza', 15, 2)->nullable();
             $table->timestamps();
 
             // Índice compuesto: vital para cargar rápido todas las ventanillas de una agencia específica

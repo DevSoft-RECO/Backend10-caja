@@ -36,6 +36,7 @@ class CajaController extends Controller
             'nombre' => 'required|string|max:255',
             'tipo_caja' => 'required|in:boveda,general,ventanilla',
             'estado' => 'boolean',
+            'poliza' => 'nullable|numeric|min:0',
         ]);
 
         $caja = Caja::create($validated);
@@ -54,6 +55,7 @@ class CajaController extends Controller
             'nombre' => 'sometimes|required|string|max:255',
             'tipo_caja' => 'sometimes|required|in:boveda,general,ventanilla',
             'estado' => 'boolean',
+            'poliza' => 'nullable|numeric|min:0',
         ]);
 
         $caja->update($validated);
