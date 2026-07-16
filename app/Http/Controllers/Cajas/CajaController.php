@@ -426,17 +426,17 @@ class CajaController extends Controller
     public function inicializarDiaCero(Request $request, Caja $caja)
     {
         $request->validate([
-            'detalles_operaciones' => 'required|array',
-            'detalles_operaciones.*.denominacion_id' => 'required|exists:denominaciones,id',
-            'detalles_operaciones.*.cantidad' => 'required|integer|min:0',
+            'detalles_operaciones' => 'nullable|array',
+            'detalles_operaciones.*.denominacion_id' => 'required_with:detalles_operaciones|exists:denominaciones,id',
+            'detalles_operaciones.*.cantidad' => 'required_with:detalles_operaciones|integer|min:0',
             
-            'detalles_cajillas' => 'required|array',
-            'detalles_cajillas.*.denominacion_id' => 'required|exists:denominaciones,id',
-            'detalles_cajillas.*.cantidad' => 'required|integer|min:0',
+            'detalles_cajillas' => 'nullable|array',
+            'detalles_cajillas.*.denominacion_id' => 'required_with:detalles_cajillas|exists:denominaciones,id',
+            'detalles_cajillas.*.cantidad' => 'required_with:detalles_cajillas|integer|min:0',
             
-            'detalles_deteriorado' => 'required|array',
-            'detalles_deteriorado.*.denominacion_id' => 'required|exists:denominaciones,id',
-            'detalles_deteriorado.*.cantidad' => 'required|integer|min:0',
+            'detalles_deteriorado' => 'nullable|array',
+            'detalles_deteriorado.*.denominacion_id' => 'required_with:detalles_deteriorado|exists:denominaciones,id',
+            'detalles_deteriorado.*.cantidad' => 'required_with:detalles_deteriorado|integer|min:0',
             
             'observaciones' => 'nullable|string'
         ]);
@@ -458,6 +458,7 @@ class CajaController extends Controller
         $procesarCompartimento = function ($detallesInput, $estado) {
             $total = 0.00;
             $detalles = [];
+            $detallesInput = is_array($detallesInput) ? $detallesInput : [];
             foreach ($detallesInput as $det) {
                 $denom = Denominacion::find($det['denominacion_id']);
                 $cant = (int) ($det['cantidad'] ?? 0);
