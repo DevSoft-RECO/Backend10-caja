@@ -645,5 +645,23 @@ class CajaController extends Controller
 
         return response()->json($stock);
     }
+    public function destroy($id)
+    {
+        try {
+            $caja = Caja::findOrFail($id);
+            $caja->delete();
+            return response()->json(['message' => 'Caja eliminada correctamente.']);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Error code 23000 = Integrity constraint violation
+            if ($e->getCode() == "23000") {
+                return response()->json([
+                    'message' => 'No se puede eliminar la caja porque ya tiene transacciones o registros asociados.'
+                ], 422);
+            }
+            return response()->json(['message' => 'Error al intentar eliminar la caja.'], 500);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Error inesperado: ' . $e->getMessage()], 500);
+        }
+    }
 
 }
