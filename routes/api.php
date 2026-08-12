@@ -37,16 +37,23 @@ Route::middleware('sso')->group(function () {
     Route::apiResource('cajas/conteos-parciales', ConteoParcialController::class)->only(['index', 'store', 'show', 'destroy']);
     Route::apiResource('cajas/cierres-diarios', CierreDiarioController::class)->only(['index', 'store', 'show']);
 
-    // Traslados entre Bóvedas (Debe ir antes de cajas/{caja} para evitar colisión de wildcards)
+    // Traslados entre Bóvedas (Envío de Efectivo)
     Route::get('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'index']);
     Route::post('cajas/traslado-bovedas', [TrasladoBovedaController::class, 'store']);
-    Route::post('cajas/traslado-bovedas/{id}/confirmar-recepcion', [TrasladoBovedaController::class, 'confirmarRecepcionSolicitud']);
-    Route::post('cajas/traslado-bovedas/{id}/programar-fecha', [TrasladoBovedaController::class, 'programarFecha']);
-    Route::post('cajas/traslado-bovedas/{id}/enviar-efectivo', [TrasladoBovedaController::class, 'enviarEfectivo']);
-    Route::post('cajas/traslado-bovedas/{id}/confirmar-recepcion-paquete', [TrasladoBovedaController::class, 'confirmarRecepcionPaquete']);
     Route::post('cajas/traslado-bovedas/{id}/marcar-enterado', [TrasladoBovedaController::class, 'marcarEnterado']);
     Route::post('cajas/traslado-bovedas/{id}/confirmar-ingreso', [TrasladoBovedaController::class, 'confirmarIngresoEfectivo']);
     Route::delete('cajas/traslado-bovedas/{id}', [TrasladoBovedaController::class, 'destroy']);
+
+    // Peticiones de Efectivo (Flujo con Tesorería)
+    Route::get('cajas/peticiones-efectivo/propias', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'indexPropias']);
+    Route::get('cajas/peticiones-efectivo/tesoreria', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'indexParaTesoreria']);
+    Route::get('cajas/peticiones-efectivo/autorizar', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'indexParaAutorizar']);
+    Route::post('cajas/peticiones-efectivo', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'store']);
+    Route::post('cajas/peticiones-efectivo/{id}/asignar-agencia', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'asignarAgencia']);
+    Route::post('cajas/peticiones-efectivo/{id}/autorizar-despachar', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'autorizarYDespachar']);
+    Route::post('cajas/peticiones-efectivo/{id}/confirmar-recepcion', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'confirmarRecepcion']);
+    Route::post('cajas/peticiones-efectivo/{id}/ingresar-efectivo', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'ingresarEfectivo']);
+    Route::delete('cajas/peticiones-efectivo/{id}', [\App\Http\Controllers\Cajas\PeticionEfectivoController::class, 'destroy']);
 
     Route::get('cajas/{caja}/estado-apertura', [CajaController::class, 'estadoApertura']);
     Route::post('cajas/{caja}/solicitar-apertura', [CajaController::class, 'solicitarApertura']);

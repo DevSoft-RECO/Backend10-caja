@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('solicitudes_traslados_bovedas', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('origen_boveda_id');
+            $table->unsignedBigInteger('origen_boveda_id')->nullable();
             $table->unsignedBigInteger('destino_boveda_id');
             $table->enum('tipo_traslado', ['pedir', 'enviar']);
             $table->decimal('monto_total', 15, 2);
@@ -22,7 +22,7 @@ return new class extends Migration
             $table->text('comentario_peticion')->nullable();
             $table->text('comentario_envio')->nullable();
             $table->unsignedBigInteger('usuario_creador_id');
-            $table->enum('estado', ['pendiente', 'solicitud_recibida', 'programado', 'enviado', 'paquete_recibido', 'enterado', 'ingresado', 'cancelado'])->default('pendiente');
+            $table->enum('estado', ['pendiente_tesoreria', 'pendiente', 'solicitud_recibida', 'programado', 'enviado', 'paquete_recibido', 'enterado', 'ingresado', 'cancelado'])->default('pendiente_tesoreria');
             $table->timestamps();
 
             // Foreign keys

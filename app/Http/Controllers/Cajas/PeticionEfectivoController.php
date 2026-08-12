@@ -14,58 +14,89 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
-class TrasladoBovedaController extends Controller
+class PeticionEfectivoController extends Controller
 {
     /**
-     * Obtener el listado de traslados de bóvedas
+     * Listar peticiones propias (las que solicitó la agencia)
      */
-    public function index(Request $request)
+    public function indexPropias(Request $request)
     {
-        $query = SolicitudTrasladoBoveda::with([
+        $request->validate(['caja_id' => 'required|exists:cajas,id']);
+        
+        $traslados = SolicitudTrasladoBoveda::with([
             'origenBoveda.agencia',
             'destinoBoveda.agencia',
             'creador',
             'detalles.denominacion'
-        ])->where('tipo_traslado', 'enviar');
-
-        // Si se pasa una agencia o caja específica
-        if ($request->has('caja_id')) {
-            $cajaId = $request->input('caja_id');
-            $query->where(function($q) use ($cajaId) {
-                $q->where('origen_boveda_id', $cajaId)
-                  ->orWhere('destino_boveda_id', $cajaId);
-            });
-        }
-
-        $traslados = $query->orderBy('id', 'desc')->get();
+        ])
+        ->where('tipo_traslado', 'pedir')
+        ->where(function($query) use ($request) {
+            $query->where('origen_boveda_id', $request->caja_id)
+                  ->orWhere('destino_boveda_id', $request->caja_id);
+        })
+        ->orderBy('id', 'desc')
+        ->get();
 
         return response()->json($traslados);
     }
 
     /**
-     * Crear una solicitud de traslado (sea pedir o enviar)
+     * Listar peticiones para Tesorería (sin asignar agencia proveedora)
+     */
+    public function indexParaTesoreria()
+    {
+        // Add gate or permission check here if necessary, though route middleware should handle it.
+        $traslados = SolicitudTrasladoBoveda::with([
+            'destinoBoveda.agencia',
+            'creador',
+            'detalles.denominacion'
+        ])
+        ->where('tipo_traslado', 'pedir')
+        ->where('estado', 'pendiente_tesoreria')
+        ->orderBy('id', 'desc')
+        ->get();
+
+        return response()->json($traslados);
+    }
+
+    /**
+     * Listar peticiones asignadas a una bóveda para que las autorice y despache
+     */
+    public function indexParaAutorizar(Request $request)
+    {
+        $request->validate(['caja_id' => 'required|exists:cajas,id']);
+
+        $traslados = SolicitudTrasladoBoveda::with([
+            'destinoBoveda.agencia',
+            'creador',
+            'detalles.denominacion'
+        ])
+        ->where('tipo_traslado', 'pedir')
+        ->where('origen_boveda_id', $request->caja_id)
+        ->whereIn('estado', ['pendiente', 'programado', 'enviado', 'paquete_recibido', 'ingresado'])
+        ->orderBy('id', 'desc')
+        ->get();
+
+        return response()->json($traslados);
+    }
+
+    /**
+     * Crear una petición de efectivo (Agencia solicitante)
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'boveda_origen_id' => 'required|exists:cajas,id',
-            'boveda_destino_id' => 'required|exists:cajas,id|different:boveda_origen_id',
-            'tipo_traslado' => 'required|in:enviar',
-            'fecha_programada' => 'nullable|date',
-            'repartidor' => 'nullable|string|max:255',
-            'comentario_envio' => 'nullable|string',
+            'boveda_destino_id' => 'required|exists:cajas,id', // Quien pide el dinero
+            'comentario_peticion' => 'nullable|string',
             'detalles' => 'required|array|min:1',
             'detalles.*.denominacion_id' => 'required|exists:denominaciones,id',
             'detalles.*.cantidad' => 'required|integer|min:1',
         ]);
 
-        $bovedaOrigen = Caja::findOrFail($validated['boveda_origen_id']);
         $bovedaDestino = Caja::findOrFail($validated['boveda_destino_id']);
 
-        if ($bovedaOrigen->tipo_caja !== 'boveda' || $bovedaDestino->tipo_caja !== 'boveda') {
-            return response()->json([
-                'message' => 'El traslado entre bóvedas solo se permite entre cajas de tipo boveda.'
-            ], 422);
+        if ($bovedaDestino->tipo_caja !== 'boveda') {
+            return response()->json(['message' => 'Solo se puede pedir dinero para una caja tipo bóveda.'], 422);
         }
 
         $montoTotal = 0;
@@ -87,17 +118,14 @@ class TrasladoBovedaController extends Controller
 
         DB::beginTransaction();
         try {
-            // Crear el registro de la solicitud
             $solicitud = SolicitudTrasladoBoveda::create([
-                'origen_boveda_id' => $bovedaOrigen->id,
+                'origen_boveda_id' => null, // Tesorería asignará
                 'destino_boveda_id' => $bovedaDestino->id,
-                'tipo_traslado' => 'enviar',
+                'tipo_traslado' => 'pedir',
                 'monto_total' => $montoTotal,
-                'fecha_programada' => $validated['fecha_programada'] ? Carbon::parse($validated['fecha_programada']) : null,
-                'repartidor' => $validated['repartidor'] ?? null,
-                'comentario_envio' => $validated['comentario_envio'] ?? null,
+                'comentario_peticion' => $validated['comentario_peticion'] ?? null,
                 'usuario_creador_id' => auth()->id() ?? User::first()->id,
-                'estado' => 'enviado'
+                'estado' => 'pendiente_tesoreria'
             ]);
 
             foreach ($detallesProcesados as $det) {
@@ -106,8 +134,79 @@ class TrasladoBovedaController extends Controller
                 ]));
             }
 
-            // Registrar inmediatamente el egreso de la bóveda de origen
-            // Validar saldo disponible en la Bóveda Origen
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Petición enviada a Tesorería exitosamente.',
+                'solicitud' => $solicitud
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Error al crear la petición: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Tesorería asigna qué agencia (bóveda origen) proveerá el efectivo
+     */
+    public function asignarAgencia(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'boveda_origen_id' => 'required|exists:cajas,id'
+        ]);
+
+        $solicitud = SolicitudTrasladoBoveda::findOrFail($id);
+
+        if ($solicitud->estado !== 'pendiente_tesoreria') {
+            return response()->json(['message' => 'La solicitud no está pendiente de asignación.'], 422);
+        }
+
+        if ($solicitud->destino_boveda_id == $validated['boveda_origen_id']) {
+            return response()->json(['message' => 'La bóveda origen no puede ser la misma que la de destino.'], 422);
+        }
+
+        $solicitud->update([
+            'origen_boveda_id' => $validated['boveda_origen_id'],
+            'estado' => 'pendiente' // Ahora la agencia proveedora lo verá y podrá despachar
+        ]);
+
+        return response()->json([
+            'message' => 'Agencia asignada exitosamente.',
+            'solicitud' => $solicitud
+        ]);
+    }
+
+    /**
+     * La agencia proveedora autoriza y despacha el efectivo
+     */
+    public function autorizarYDespachar(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'repartidor' => 'required|string|max:255',
+            'fecha_programada' => 'required|date',
+            'comentario_envio' => 'nullable|string'
+        ]);
+
+        $solicitud = SolicitudTrasladoBoveda::with('detalles')->findOrFail($id);
+
+        if (!in_array($solicitud->estado, ['pendiente', 'programado'])) {
+            return response()->json(['message' => 'La solicitud no está lista para enviarse.'], 422);
+        }
+
+        $bovedaOrigen = Caja::findOrFail($solicitud->origen_boveda_id);
+        $bovedaDestino = Caja::findOrFail($solicitud->destino_boveda_id);
+
+        $detallesProcesados = $solicitud->detalles->map(function($det) {
+            return [
+                'denominacion_id' => $det->denominacion_id,
+                'cantidad' => $det->cantidad,
+                'subtotal' => $det->subtotal
+            ];
+        })->toArray();
+
+        DB::beginTransaction();
+        try {
             $errorSaldo = $this->validarSaldoBoveda($bovedaOrigen, $detallesProcesados);
             if ($errorSaldo) {
                 DB::rollBack();
@@ -121,21 +220,19 @@ class TrasladoBovedaController extends Controller
 
             if (!$cajaGeneralOrigen) {
                 DB::rollBack();
-                return response()->json([
-                    'message' => 'No se encontró una Caja General activa en la agencia de origen.'
-                ], 422);
+                return response()->json(['message' => 'No se encontró una Caja General activa en la agencia de origen.'], 422);
             }
 
-            // A. Registrar Movimiento de Egreso de Bóveda Origen a Caja General Origen
+            // Registrar Egreso
             $movimientoEgreso = Movimiento::create([
                 'origen_caja_id' => $bovedaOrigen->id,
                 'destino_caja_id' => $cajaGeneralOrigen->id,
                 'tipo_operacion' => 'egreso',
                 'categoria_movimiento' => 'traslado_boveda',
-                'monto_total' => $montoTotal,
+                'monto_total' => $solicitud->monto_total,
                 'usuario_id' => auth()->id() ?? User::first()->id,
                 'fecha_transaccion' => Carbon::now(),
-                'comentario' => "Traslado de efectivo (salida inmediata) hacia Bóveda de Agencia {$bovedaDestino->agencia->nombre}. Repartidor: " . ($validated['repartidor'] ?? 'No especificado')
+                'comentario' => "Traslado de efectivo (despacho por petición de tesorería) hacia Bóveda de Agencia {$bovedaDestino->agencia->nombre}. Repartidor: {$validated['repartidor']}"
             ]);
 
             foreach ($detallesProcesados as $det) {
@@ -148,27 +245,30 @@ class TrasladoBovedaController extends Controller
                 ]);
             }
 
+            $solicitud->update([
+                'fecha_programada' => Carbon::parse($validated['fecha_programada']),
+                'repartidor' => $validated['repartidor'],
+                'comentario_envio' => $validated['comentario_envio'] ?? null,
+                'estado' => 'enviado'
+            ]);
+
             DB::commit();
 
             return response()->json([
-                'message' => 'Solicitud de traslado registrada exitosamente.',
+                'message' => 'Efectivo despachado exitosamente.',
                 'solicitud' => $solicitud
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'message' => 'Error al procesar el traslado: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['message' => 'Error al registrar despacho: ' . $e->getMessage()], 500);
         }
     }
 
-
-
     /**
-     * Marcar como enterado (para tipo 'enviar')
+     * La agencia que pidió confirma la recepción del paquete
      */
-    public function marcarEnterado($id)
+    public function confirmarRecepcion($id)
     {
         $solicitud = SolicitudTrasladoBoveda::findOrFail($id);
 
@@ -176,25 +276,23 @@ class TrasladoBovedaController extends Controller
             return response()->json(['message' => 'La solicitud no está en estado enviado.'], 422);
         }
 
-        $solicitud->update(['estado' => 'enterado']);
+        $solicitud->update(['estado' => 'paquete_recibido']);
 
         return response()->json([
-            'message' => 'Marcado como enterado.',
+            'message' => 'Recepción del paquete confirmada.',
             'solicitud' => $solicitud
         ]);
     }
 
     /**
-     * Confirmar el ingreso definitivo a la bóveda destino (para ambos flujos, registra el ingreso)
+     * La agencia que pidió ingresa el efectivo a su bóveda
      */
-    public function confirmarIngresoEfectivo($id)
+    public function ingresarEfectivo($id)
     {
         $solicitud = SolicitudTrasladoBoveda::with('detalles')->findOrFail($id);
 
-        // Puede ingresarse desde 'paquete_recibido' (en 'pedir') o 'enterado' / 'enviado' (en 'enviar')
-        $estadosPermitidos = ['paquete_recibido', 'enterado', 'enviado'];
-        if (!in_array($solicitud->estado, $estadosPermitidos)) {
-            return response()->json(['message' => 'La solicitud no se encuentra en un estado válido para ingresar efectivo.'], 422);
+        if ($solicitud->estado !== 'paquete_recibido') {
+            return response()->json(['message' => 'Primero debe confirmar la recepción del paquete.'], 422);
         }
 
         $bovedaOrigen = Caja::findOrFail($solicitud->origen_boveda_id);
@@ -211,7 +309,7 @@ class TrasladoBovedaController extends Controller
 
         DB::beginTransaction();
         try {
-            // B. Registrar Movimiento de Ingreso de Caja General Destino a Bóveda Destino
+            // Registrar Movimiento de Ingreso
             $movimientoIngreso = Movimiento::create([
                 'origen_caja_id' => $cajaGeneralDestino->id,
                 'destino_caja_id' => $bovedaDestino->id,
@@ -220,7 +318,7 @@ class TrasladoBovedaController extends Controller
                 'monto_total' => $solicitud->monto_total,
                 'usuario_id' => auth()->id() ?? User::first()->id,
                 'fecha_transaccion' => Carbon::now(),
-                'comentario' => "Confirmación de ingreso de efectivo desde Bóveda de Agencia {$bovedaOrigen->agencia->nombre}. Repartidor: " . ($solicitud->repartidor ?? 'No especificado')
+                'comentario' => "Confirmación de ingreso de petición desde Bóveda de Agencia {$bovedaOrigen->agencia->nombre}. Repartidor: {$solicitud->repartidor}"
             ]);
 
             foreach ($solicitud->detalles as $det) {
@@ -253,15 +351,14 @@ class TrasladoBovedaController extends Controller
         $solicitud = SolicitudTrasladoBoveda::with('detalles')->findOrFail($id);
 
         if (in_array($solicitud->estado, ['ingresado', 'cancelado'])) {
-            return response()->json(['message' => 'No se puede cancelar un traslado que ya ha sido ingresado o cancelado.'], 422);
+            return response()->json(['message' => 'No se puede cancelar una petición ingresada o cancelada.'], 422);
         }
 
         DB::beginTransaction();
         try {
-            // Si el dinero ya fue enviado pero no se ha confirmado el ingreso
-            if (in_array($solicitud->estado, ['enviado', 'enterado', 'paquete_recibido'])) {
+            // Si ya fue despachado, reversar el egreso de la bóveda proveedora
+            if (in_array($solicitud->estado, ['enviado', 'paquete_recibido'])) {
                 $bovedaOrigen = Caja::findOrFail($solicitud->origen_boveda_id);
-
                 $cajaGeneralOrigen = Caja::where('tipo_caja', 'general')
                     ->where('agencia_id', $bovedaOrigen->agencia_id)
                     ->where('estado', true)
@@ -269,12 +366,9 @@ class TrasladoBovedaController extends Controller
 
                 if (!$cajaGeneralOrigen) {
                     DB::rollBack();
-                    return response()->json([
-                        'message' => 'No se encontró una Caja General activa en la agencia de origen para realizar la reversión.'
-                    ], 422);
+                    return response()->json(['message' => 'No se encontró una Caja General activa para la reversión.'], 422);
                 }
 
-                // Registrar el movimiento de reingreso (Ingreso)
                 $movimientoIngreso = Movimiento::create([
                     'origen_caja_id' => $cajaGeneralOrigen->id,
                     'destino_caja_id' => $bovedaOrigen->id,
@@ -283,7 +377,7 @@ class TrasladoBovedaController extends Controller
                     'monto_total' => $solicitud->monto_total,
                     'usuario_id' => auth()->id() ?? User::first()->id,
                     'fecha_transaccion' => Carbon::now(),
-                    'comentario' => "Reversión por cancelación de traslado de envío #{$solicitud->id}."
+                    'comentario' => "Reversión por cancelación de despacho #{$solicitud->id}."
                 ]);
 
                 foreach ($solicitud->detalles as $det) {
@@ -297,33 +391,26 @@ class TrasladoBovedaController extends Controller
                 }
             }
 
-            // Cambiar estado a cancelado
             $solicitud->update(['estado' => 'cancelado']);
 
             DB::commit();
 
             return response()->json([
-                'message' => 'Traslado cancelado y fondos reversados correctamente.',
+                'message' => 'Petición cancelada correctamente.',
                 'solicitud' => $solicitud
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json([
-                'message' => 'Error al cancelar y reversar el traslado: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['message' => 'Error al cancelar petición: ' . $e->getMessage()], 500);
         }
     }
 
-    /**
-     * Helper para validar saldos en la bóveda
-     */
     private function validarSaldoBoveda($boveda, $detalles)
     {
         $start = Carbon::today()->startOfDay();
         $end = Carbon::today()->endOfDay();
 
-        // Cierre
         $ultimoCierre = DB::table('cierres_diarios')
             ->where('caja_id', $boveda->id)
             ->orderBy('id', 'desc')
@@ -338,7 +425,6 @@ class TrasladoBovedaController extends Controller
                 ->toArray();
         }
 
-        // Ingresos y egresos hoy
         $ingresosHoy = DB::table('movimiento_detalles')
             ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
             ->where('movimientos.destino_caja_id', $boveda->id)
