@@ -32,6 +32,16 @@ class MovimientoController extends Controller
             $query->whereDate('fecha_transaccion', '>=', $request->fecha_desde);
         }
 
+        if ($request->has('agencia_id')) {
+            $query->where(function ($q) use ($request) {
+                $q->whereHas('origenCaja', function ($sub) use ($request) {
+                    $sub->where('agencia_id', $request->agencia_id);
+                })->orWhereHas('destinoCaja', function ($sub) use ($request) {
+                    $sub->where('agencia_id', $request->agencia_id);
+                });
+            });
+        }
+
         if ($request->has('fecha_hasta')) {
             $query->whereDate('fecha_transaccion', '<=', $request->fecha_hasta);
         }
