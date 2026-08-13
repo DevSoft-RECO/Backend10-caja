@@ -97,7 +97,8 @@ class DescuadreAgenciaController extends Controller
         $adjuntos = [];
         $hasGcs = config('filesystems.disks.gcs.key_file') !== null;
         $disk = $hasGcs ? 'gcs' : 'public';
-        $folder = $hasGcs ? 'APP_Tesoreria/Descaudres' : 'descuadres';
+        $prefix = env('GCS_PATH_PREFIX', 'App_caja');
+        $folder = $hasGcs ? "{$prefix}/Descuadres" : 'descuadres';
 
         if ($request->hasFile('archivos')) {
             $cleanCaja = str_replace(' ', '', strtolower($request->codigo_caja));
