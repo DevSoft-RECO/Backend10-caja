@@ -89,8 +89,12 @@ Route::middleware('sso')->group(function () {
     Route::get('agencias', function () {
         return response()->json(\App\Models\Agencia::orderBy('nombre')->get());
     });
-    Route::get('usuarios', function () {
-        return response()->json(\App\Models\User::orderBy('name')->get());
+    Route::get('usuarios', function (\Illuminate\Http\Request $request) {
+        $query = \App\Models\User::orderBy('name');
+        if ($request->has('agencia_id')) {
+            $query->where('id_agencia', $request->query('agencia_id'));
+        }
+        return response()->json($query->get());
     });
 
 });
