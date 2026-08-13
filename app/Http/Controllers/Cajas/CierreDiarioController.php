@@ -35,6 +35,12 @@ class CierreDiarioController extends Controller
             $query->where('caja_id', $request->caja_id);
         }
 
+        if ($request->has('agencia_id')) {
+            $query->whereHas('caja', function ($q) use ($request) {
+                $q->where('agencia_id', $request->agencia_id);
+            });
+        }
+
         return response()->json($query->get());
     }
 
