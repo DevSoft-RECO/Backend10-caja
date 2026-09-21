@@ -79,24 +79,54 @@ class CajaController extends Controller
     // GET /api/cajas/{caja}/estado-apertura
     public function estadoApertura(Caja $caja)
     {
+        $hoyInicio = Carbon::today()->startOfDay();
+        $hoyFin = Carbon::today()->endOfDay();
+
+        // 1. Verificar si la caja ya fue abierta hoy
+        $aperturaHoy = Movimiento::with('usuario')
+            ->where('destino_caja_id', $caja->id)
+            ->where('categoria_movimiento', 'cajilla_apertura')
+            ->whereBetween('fecha_transaccion', [$hoyInicio, $hoyFin])
+            ->orderBy('id', 'desc')
+            ->first();
+
+        // 2. Verificar si cerró hoy
+        $cierreHoy = Movimiento::where('origen_caja_id', $caja->id)
+            ->where('categoria_movimiento', 'cajilla_cierre')
+            ->whereBetween('fecha_transaccion', [$hoyInicio, $hoyFin])
+            ->orderBy('id', 'desc')
+            ->first();
+
+        // Está abierta si tuvo apertura hoy y no ha cerrado hoy (o la apertura es más reciente que el cierre)
+        $estaAbierta = $aperturaHoy && (!$cierreHoy || $aperturaHoy->id > $cierreHoy->id);
+
+        // 3. Verificar si tiene solicitud de apertura pendiente
+        $solicitudPendiente = SolicitudApertura::where('caja_id', $caja->id)
+            ->where('estado', 'pendiente')
+            ->first();
+
+        // 4. Último cierre previo (para heredar denominaciones y saldo esperado)
         $ultimoCierre = CierreDiario::with('detalles.denominacion')
             ->where('caja_id', $caja->id)
             ->orderBy('id', 'desc')
             ->first();
 
-        if (!$ultimoCierre) {
-            return response()->json([
-                'tiene_cierre_anterior' => false,
-                'saldo_final_fisico_declarado' => 0.00,
-                'detalles' => []
-            ]);
-        }
-
         return response()->json([
-            'tiene_cierre_anterior' => true,
-            'saldo_final_fisico_declarado' => (float) $ultimoCierre->saldo_final_fisico_declarado,
-            'fecha_cierre' => $ultimoCierre->fecha_cierre,
-            'detalles' => $ultimoCierre->detalles
+            'tiene_cierre_anterior' => (bool) $ultimoCierre,
+            'saldo_final_fisico_declarado' => $ultimoCierre ? (float) $ultimoCierre->saldo_final_fisico_declarado : 0.00,
+            'fecha_cierre' => $ultimoCierre ? $ultimoCierre->fecha_cierre : null,
+            'detalles' => $ultimoCierre ? $ultimoCierre->detalles : [],
+            'esta_abierta' => (bool) $estaAbierta,
+            'apertura_hoy' => $aperturaHoy ? [
+                'monto_total' => (float) $aperturaHoy->monto_total,
+                'fecha_transaccion' => $aperturaHoy->fecha_transaccion,
+                'usuario' => $aperturaHoy->usuario ? $aperturaHoy->usuario->name : null,
+            ] : null,
+            'solicitud_pendiente' => $solicitudPendiente ? [
+                'id' => $solicitudPendiente->id,
+                'monto_total' => (float) $solicitudPendiente->monto_total,
+                'created_at' => $solicitudPendiente->created_at,
+            ] : null,
         ]);
     }
 
