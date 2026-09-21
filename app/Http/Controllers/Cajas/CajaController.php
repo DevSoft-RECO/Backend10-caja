@@ -176,7 +176,7 @@ class CajaController extends Controller
                     ->where('movimientos.destino_caja_id', $boveda->id)
                     ->where('movimiento_detalles.denominacion_id', $denomId)
                     ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                    ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'devolucion', 'cierre_jornada_barrido'])
+                    ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'cierre_jornada_barrido'])
                     ->sum('movimiento_detalles.cantidad');
 
                 $egresosBoveda = DB::table('movimiento_detalles')
@@ -184,7 +184,7 @@ class CajaController extends Controller
                     ->where('movimientos.origen_caja_id', $boveda->id)
                     ->where('movimiento_detalles.denominacion_id', $denomId)
                     ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                    ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                    ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura'])
                     ->sum('movimiento_detalles.cantidad');
 
                 $cantDisponibleBoveda = (int) ($cantidadInicialBoveda + $ingresosBoveda - $egresosBoveda);
@@ -343,7 +343,7 @@ class CajaController extends Controller
                             ->where('movimientos.destino_caja_id', $boveda->id)
                             ->where('movimiento_detalles.denominacion_id', $denomId)
                             ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                            ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'devolucion', 'cierre_jornada_barrido'])
+                            ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'cierre_jornada_barrido'])
                             ->sum('movimiento_detalles.cantidad');
 
                         $egresosBoveda = DB::table('movimiento_detalles')
@@ -351,7 +351,7 @@ class CajaController extends Controller
                             ->where('movimientos.origen_caja_id', $boveda->id)
                             ->where('movimiento_detalles.denominacion_id', $denomId)
                             ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                            ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                            ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura'])
                             ->sum('movimiento_detalles.cantidad');
 
                         $cantDisponibleBoveda = (int) ($cantidadInicialBoveda + $ingresosBoveda - $egresosBoveda);
@@ -565,8 +565,8 @@ class CajaController extends Controller
         foreach ($denominaciones as $denom) {
             $denomId = $denom->id;
 
-            // 1. Stock bueno (cajillas para bóvedas, bueno para ventanillas/general)
-            $estadoDineroBueno = ($caja->tipo_caja === 'boveda') ? 'cajillas' : 'bueno';
+            // 1. Stock bueno (Operaciones: 'bueno' tanto para bóvedas como para ventanillas/general)
+            $estadoDineroBueno = 'bueno';
             
             $cantInicialBueno = 0;
             if ($ultimoCierre) {
@@ -577,31 +577,21 @@ class CajaController extends Controller
                     ->value('cantidad') ?? 0;
             }
 
-            $ingresosBuenoQuery = DB::table('movimiento_detalles')
+            $ingresosBueno = DB::table('movimiento_detalles')
                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                 ->where('movimientos.destino_caja_id', $caja->id)
                 ->where('movimiento_detalles.denominacion_id', $denomId)
-                ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
+                ->where('movimiento_detalles.estado_dinero', 'bueno')
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->sum('movimiento_detalles.cantidad');
 
-            if ($caja->tipo_caja === 'boveda') {
-                $ingresosBuenoQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
-            } else {
-                $ingresosBuenoQuery->where('movimiento_detalles.estado_dinero', 'bueno');
-            }
-            $ingresosBueno = $ingresosBuenoQuery->sum('movimiento_detalles.cantidad');
-
-            $egresosBuenoQuery = DB::table('movimiento_detalles')
+            $egresosBueno = DB::table('movimiento_detalles')
                 ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                 ->where('movimientos.origen_caja_id', $caja->id)
                 ->where('movimiento_detalles.denominacion_id', $denomId)
-                ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
-
-            if ($caja->tipo_caja === 'boveda') {
-                $egresosBuenoQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
-            } else {
-                $egresosBuenoQuery->where('movimiento_detalles.estado_dinero', 'bueno');
-            }
-            $egresosBueno = $egresosBuenoQuery->sum('movimiento_detalles.cantidad');
+                ->where('movimiento_detalles.estado_dinero', 'bueno')
+                ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                ->sum('movimiento_detalles.cantidad');
 
             $stockBueno = (int) ($cantInicialBueno + $ingresosBueno - $egresosBueno);
 

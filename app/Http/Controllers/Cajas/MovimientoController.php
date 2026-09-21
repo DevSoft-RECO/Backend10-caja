@@ -332,9 +332,9 @@ class MovimientoController extends Controller
                         $cantSolicitadaB = (int) $det->cantidad_buena;
                         $cantSolicitadaD = (int) $det->cantidad_deteriorada;
                         
-                        // Validar stock de dinero bueno (cajillas / saldo neto de ventanilla)
+                        // Validar stock de dinero bueno (Operaciones)
                         if ($cantSolicitadaB > 0) {
-                            $estadoDinero = ($origen->tipo_caja === 'boveda') ? 'cajillas' : 'bueno';
+                            $estadoDinero = 'bueno';
 
                             $cantidadInicial = 0;
                             if ($ultimoCierre) {
@@ -345,32 +345,22 @@ class MovimientoController extends Controller
                                     ->value('cantidad') ?? 0;
                             }
 
-                            // Calcular movimientos del día para dinero bueno
-                            $ingresosQuery = DB::table('movimiento_detalles')
+                            // Calcular movimientos del día para dinero bueno (Operaciones)
+                            $ingresos = DB::table('movimiento_detalles')
                                  ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                                  ->where('movimientos.destino_caja_id', $origen->id)
                                  ->where('movimiento_detalles.denominacion_id', $denomId)
-                                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
-
-                             if ($origen->tipo_caja === 'boveda') {
-                                 $ingresosQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
-                             } else {
-                                 $ingresosQuery->where('movimiento_detalles.estado_dinero', 'bueno');
-                             }
-                             $ingresos = $ingresosQuery->sum('movimiento_detalles.cantidad');
+                                 ->where('movimiento_detalles.estado_dinero', 'bueno')
+                                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                                 ->sum('movimiento_detalles.cantidad');
  
-                             $egresosQuery = DB::table('movimiento_detalles')
+                            $egresos = DB::table('movimiento_detalles')
                                  ->join('movimientos', 'movimiento_detalles.movimiento_id', '=', 'movimientos.id')
                                  ->where('movimientos.origen_caja_id', $origen->id)
                                  ->where('movimiento_detalles.denominacion_id', $denomId)
-                                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end]);
-
-                             if ($origen->tipo_caja === 'boveda') {
-                                 $egresosQuery->whereIn('movimiento_detalles.estado_dinero', ['cajillas', 'bueno']);
-                             } else {
-                                 $egresosQuery->where('movimiento_detalles.estado_dinero', 'bueno');
-                             }
-                             $egresos = $egresosQuery->sum('movimiento_detalles.cantidad');
+                                 ->where('movimiento_detalles.estado_dinero', 'bueno')
+                                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
+                                 ->sum('movimiento_detalles.cantidad');
 
                             $cantDisponible = (int) ($cantidadInicial + $ingresos - $egresos);
 

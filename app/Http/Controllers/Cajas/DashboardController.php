@@ -515,7 +515,7 @@ class DashboardController extends Controller
                 ->where('movimientos.destino_caja_id', $cajaId)
                 ->where('movimiento_detalles.denominacion_id', $denom->id)
                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'devolucion', 'cierre_jornada_barrido'])
+                ->whereIn('movimientos.categoria_movimiento', ['cajilla_cierre', 'cierre_jornada_barrido'])
                 ->sum('movimiento_detalles.cantidad');
 
             // Egresos (cuando origen_caja_id es la Bóveda y es flujo de cajillas)
@@ -524,7 +524,7 @@ class DashboardController extends Controller
                 ->where('movimientos.origen_caja_id', $cajaId)
                 ->where('movimiento_detalles.denominacion_id', $denom->id)
                 ->whereBetween('movimientos.fecha_transaccion', [$start, $end])
-                ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura', 'abastecimiento'])
+                ->whereIn('movimientos.categoria_movimiento', ['cajilla_apertura'])
                 ->sum('movimiento_detalles.cantidad');
 
             $cantidadDisponible = (int) ($cantidadInicial + $ingresos - $egresos);
