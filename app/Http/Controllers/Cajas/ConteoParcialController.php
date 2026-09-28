@@ -21,10 +21,23 @@ class ConteoParcialController extends Controller
 
     public function index(Request $request)
     {
-        $query = ConteoParcial::with(['caja.agencia', 'usuario', 'detalles.denominacion']);
+        $query = ConteoParcial::with(['caja.agencia', 'usuario', 'detalles.denominacion'])
+            ->orderBy('fecha_hora', 'desc')
+            ->orderBy('id', 'desc');
 
         if ($request->has('caja_id')) {
             $query->where('caja_id', $request->caja_id);
+        }
+
+        if ($request->has('usuario_id')) {
+            $query->where('usuario_id', $request->usuario_id);
+        }
+
+        // Filtro por fecha: por defecto solo los arqueos del día de hoy
+        if ($request->has('fecha')) {
+            $query->whereDate('fecha_hora', $request->fecha);
+        } elseif (!$request->boolean('todas_fechas')) {
+            $query->whereDate('fecha_hora', now()->toDateString());
         }
 
         return response()->json($query->get());
@@ -68,48 +81,49 @@ class ConteoParcialController extends Controller
                 ];
             }
 
-            // 2. Buscar si ya existe un arqueo para esta caja
-            $conteo = ConteoParcial::where('caja_id', $cajaId)->first();
-
-            if ($conteo) {
-                // Actualizar cabecera existente
-                $conteo->update([
-                    'usuario_id' => auth()->id() ?? 1,
-                    'fecha_hora' => now(),
-                    'total_fisico_declarado' => $totalFisico,
-                ]);
-                // Eliminar detalles previos
-                $conteo->detalles()->delete();
-            } else {
-                // Crear cabecera
-                $conteo = ConteoParcial::create([
-                    'caja_id' => $cajaId,
-                    'usuario_id' => auth()->id() ?? 1,
-                    'fecha_hora' => now(),
-                    'total_fisico_declarado' => $totalFisico,
-                ]);
+            // 2. Guardar SIEMPRE un nuevo arqueo para mantener el historial completo de control
+            $usuarioId = auth()->id();
+            if (!$usuarioId || !\App\Models\User::where('id', $usuarioId)->exists()) {
+                $usuarioId = \App\Models\User::first()?->id ?? 1;
             }
+
+            $conteo = ConteoParcial::create([
+                'caja_id' => $cajaId,
+                'usuario_id' => $usuarioId,
+                'fecha_hora' => now(),
+                'total_fisico_declarado' => $totalFisico,
+            ]);
 
             // 3. Crear detalles
             foreach ($detallesParaCrear as $detalle) {
                 $conteo->detalles()->create($detalle);
             }
 
-            return response()->json($conteo->load('detalles.denominacion'), 200);
+            return response()->json($conteo->load(['detalles.denominacion', 'usuario']), 201);
         });
     }
 
-    public function destroy($cajaId)
+    public function destroy($id)
     {
-        $conteo = ConteoParcial::where('caja_id', $cajaId)->first();
+        // Puede recibir el ID directo del conteo o el ID de la caja
+        $conteo = ConteoParcial::find($id);
+
+        if (!$conteo) {
+            $conteo = ConteoParcial::where('caja_id', $id)
+                ->whereDate('fecha_hora', now()->toDateString())
+                ->latest('fecha_hora')
+                ->first();
+        }
+
         if ($conteo) {
             $conteo->delete();
             return response()->json([
-                'message' => 'El conteo parcial ha sido limpiado correctamente.'
+                'message' => 'El conteo parcial ha sido eliminado correctamente.'
             ], 200);
         }
+
         return response()->json([
-            'message' => 'No se encontró ningún conteo para limpiar.'
+            'message' => 'No se encontró ningún conteo para eliminar.'
         ], 404);
     }
 }
