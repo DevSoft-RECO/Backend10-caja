@@ -19,25 +19,61 @@ class ConteoParcialController extends Controller
         $this->saldoService = $saldoService;
     }
 
+    /**
+     * Consulta operativa estándar: obtiene los conteos parciales del día actual para una caja.
+     */
     public function index(Request $request)
     {
         $query = ConteoParcial::with(['caja.agencia', 'usuario', 'detalles.denominacion'])
+            ->whereDate('fecha_hora', now()->toDateString())
             ->orderBy('fecha_hora', 'desc')
             ->orderBy('id', 'desc');
 
-        if ($request->has('caja_id')) {
+        if ($request->filled('caja_id')) {
             $query->where('caja_id', $request->caja_id);
         }
 
-        if ($request->has('usuario_id')) {
+        return response()->json($query->get());
+    }
+
+    /**
+     * Consulta especializada para Auditoría: historial completo de arqueos filtrado EXCLUSIVAMENTE para Ventanillas.
+     * Ignora Bóvedas y Cajas Generales.
+     */
+    public function historialAuditoria(Request $request)
+    {
+        $query = ConteoParcial::with(['caja.agencia', 'usuario', 'detalles.denominacion'])
+            ->whereHas('caja', function ($q) use ($request) {
+                // Filtrar estrictamente ventanillas, omitiendo bóvedas y generales
+                $q->where('tipo_caja', 'ventanilla');
+
+                if ($request->filled('agencia_id')) {
+                    $q->where('agencia_id', $request->agencia_id);
+                }
+            })
+            ->orderBy('fecha_hora', 'desc')
+            ->orderBy('id', 'desc');
+
+        if ($request->filled('caja_id')) {
+            $query->where('caja_id', $request->caja_id);
+        }
+
+        if ($request->filled('usuario_id')) {
             $query->where('usuario_id', $request->usuario_id);
         }
 
-        // Filtro por fecha: por defecto solo los arqueos del día de hoy
-        if ($request->has('fecha')) {
+        // Filtro por fecha o rango de fechas
+        if ($request->filled('fecha_desde') && $request->filled('fecha_hasta')) {
+            $query->whereBetween('fecha_hora', [
+                "{$request->fecha_desde} 00:00:00",
+                "{$request->fecha_hasta} 23:59:59"
+            ]);
+        } elseif ($request->filled('fecha_desde')) {
+            $query->whereDate('fecha_hora', '>=', $request->fecha_desde);
+        } elseif ($request->filled('fecha_hasta')) {
+            $query->whereDate('fecha_hora', '<=', $request->fecha_hasta);
+        } elseif ($request->filled('fecha')) {
             $query->whereDate('fecha_hora', $request->fecha);
-        } elseif (!$request->boolean('todas_fechas')) {
-            $query->whereDate('fecha_hora', now()->toDateString());
         }
 
         return response()->json($query->get());

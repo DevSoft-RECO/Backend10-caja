@@ -34,6 +34,7 @@ Route::middleware('sso')->group(function () {
     ]);
     
     // Auditoría y Cierres
+    Route::get('cajas/conteos-parciales/historial', [ConteoParcialController::class, 'historialAuditoria']);
     Route::apiResource('cajas/conteos-parciales', ConteoParcialController::class)->only(['index', 'store', 'show', 'destroy']);
     Route::apiResource('cajas/cierres-diarios', CierreDiarioController::class)->only(['index', 'store', 'show']);
 
