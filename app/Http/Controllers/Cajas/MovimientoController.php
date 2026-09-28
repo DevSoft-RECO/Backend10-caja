@@ -297,20 +297,31 @@ class MovimientoController extends Controller
             return response()->json(['message' => 'Esta solicitud ya ha sido procesada anteriormente.'], 400);
         }
 
-        $autorizadorId = auth()->id() ?? 1;
+        $autorizadorId = auth()->id();
+        if (!$autorizadorId || !User::where('id', $autorizadorId)->exists()) {
+            $autorizadorId = User::first()?->id ?? 1;
+        }
+
+        $motivo = $request->observaciones ?? $request->observaciones_autorizador ?? $request->motivo_rechazo;
 
         if ($request->accion === 'rechazado') {
-            $solicitud->update([
-                'estado' => 'rechazado',
-                'usuario_autorizador_id' => $autorizadorId,
-                'observaciones_autorizador' => $request->observaciones,
-                'fecha_autorizacion' => now()
-            ]);
+            try {
+                $solicitud->update([
+                    'estado' => 'rechazado',
+                    'usuario_autorizador_id' => $autorizadorId,
+                    'observaciones_autorizador' => $motivo,
+                    'fecha_autorizacion' => now()
+                ]);
 
-            return response()->json([
-                'message' => 'Solicitud de movimiento rechazada correctamente.',
-                'solicitud' => $solicitud
-            ]);
+                return response()->json([
+                    'message' => 'Solicitud de movimiento rechazada correctamente.',
+                    'solicitud' => $solicitud
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'message' => 'Error al rechazar la solicitud: ' . $e->getMessage()
+                ], 500);
+            }
         }
 
         // Si es Aprobado, creamos el movimiento en el Libro Mayor

@@ -32,6 +32,13 @@ class SolicitudMovimiento extends Model
         'fecha_autorizacion' => 'datetime',
     ];
 
+    protected $appends = ['observaciones'];
+
+    public function getObservacionesAttribute(): ?string
+    {
+        return $this->observaciones_autorizador;
+    }
+
     public function origen(): BelongsTo
     {
         return $this->belongsTo(Caja::class, 'origen_caja_id');
